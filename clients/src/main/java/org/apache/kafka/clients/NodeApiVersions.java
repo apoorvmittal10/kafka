@@ -128,8 +128,11 @@ public class NodeApiVersions {
      * Get the latest version supported by the broker within an allowed range of versions
      */
     public short latestUsableVersion(ApiKeys apiKey, short oldestAllowedVersion, short latestAllowedVersion) {
-        if (!supportedVersions.containsKey(apiKey))
+        if (!supportedVersions.containsKey(apiKey)) {
+            System.out.println("[APM] - Throw unsupported version error: " + apiKey + " oldest: " +
+                oldestAllowedVersion + " latest: " + latestAllowedVersion);
             throw new UnsupportedVersionException("The node does not support " + apiKey);
+        }
         ApiVersion supportedVersion = supportedVersions.get(apiKey);
         Optional<ApiVersion> intersectVersion = ApiVersionsResponse.intersect(supportedVersion,
             new ApiVersion()

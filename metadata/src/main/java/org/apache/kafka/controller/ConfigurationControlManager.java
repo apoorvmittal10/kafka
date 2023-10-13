@@ -180,6 +180,7 @@ public class ConfigurationControlManager {
                 resourceEntry.getValue(),
                 newlyCreatedResource,
                 outputRecords);
+            System.out.println("[APM] API check: " + apiError);
             outputResults.put(resourceEntry.getKey(), apiError);
         }
         return ControllerResult.atomicOf(outputRecords, outputResults);
@@ -256,10 +257,12 @@ public class ConfigurationControlManager {
             }
         }
         ApiError error = validateAlterConfig(configResource, newRecords, Collections.emptyList(), newlyCreatedResource);
+        System.out.println("[APM] API error: " + error);
         if (error.isFailure()) {
             return error;
         }
         outputRecords.addAll(newRecords);
+        System.out.println("[APM] API error none");
         return ApiError.NONE;
     }
 
@@ -287,12 +290,18 @@ public class ConfigurationControlManager {
             // in the list passed to the policy in order to maintain backwards compatibility
         }
         try {
+            System.out.println("[APM] Validation configs: " + newlyCreatedResource);
             validator.validate(configResource, allConfigs);
+            System.out.println("[APM] Validation successful: " + newlyCreatedResource);
             if (!newlyCreatedResource) {
+                System.out.println("[APM] existence checker");
                 existenceChecker.accept(configResource);
+                System.out.println("[APM] existence checker accepted");
             }
             if (alterConfigPolicy.isPresent()) {
+                System.out.println("[APM] alterConfigPolicy validate");
                 alterConfigPolicy.get().validate(new RequestMetadata(configResource, alteredConfigsForAlterConfigPolicyCheck));
+                System.out.println("[APM] alterConfigPolicy validation successful");
             }
         } catch (ConfigException e) {
             return new ApiError(INVALID_CONFIG, e.getMessage());
@@ -304,6 +313,7 @@ public class ConfigurationControlManager {
             }
             return apiError;
         }
+        System.out.println("[APM] Validation successful");
         return ApiError.NONE;
     }
 

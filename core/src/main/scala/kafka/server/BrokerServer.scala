@@ -313,6 +313,7 @@ class BrokerServer(
 
       dynamicConfigHandlers = Map[String, ConfigHandler](
         ConfigType.Topic -> new TopicConfigHandler(replicaManager, config, quotaManagers, None),
+        ConfigType.ClientMetrics -> new ClientMetricsConfigHandler,
         ConfigType.Broker -> new BrokerConfigHandler(config, quotaManagers))
 
       val featuresRemapped = brokerFeatures.supportedFeatures.features().asScala.map {

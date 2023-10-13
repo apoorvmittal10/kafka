@@ -21,6 +21,8 @@ import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.metrics.JmxReporter;
 import org.apache.kafka.common.metrics.MetricsReporter;
+import org.apache.kafka.common.config.ConfigException;
+import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
 import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
@@ -104,6 +106,10 @@ public class CommonClientConfigs {
 
     public static final int RETRY_BACKOFF_EXP_BASE = 2;
     public static final double RETRY_BACKOFF_JITTER = 0.2;
+
+    public static final String ENABLE_METRICS_PUSH_CONFIG = "enable.metrics.push";
+    public static final String ENABLE_METRICS_PUSH_DOC = "Kafka client telemetry provides Kafka operators improved visibility over the behavior and internals of the clients that use the cluster." +
+        " Setting this to false will disable Kafka client telemetry.";
 
     public static final String METRICS_SAMPLE_WINDOW_MS_CONFIG = "metrics.sample.window.ms";
     public static final String METRICS_SAMPLE_WINDOW_MS_DOC = "The window of time a metrics sample is computed over.";
@@ -288,6 +294,12 @@ public class CommonClientConfigs {
             JmxReporter jmxReporter = new JmxReporter();
             jmxReporter.configure(config.originals(clientIdOverride));
             reporters.add(jmxReporter);
+        }
+        if (config.getBoolean(CommonClientConfigs.ENABLE_METRICS_PUSH_CONFIG) &&
+            reporters.stream().noneMatch(r -> ClientTelemetryReporter.class.equals(r.getClass()))) {
+            ClientTelemetryReporter telemetryReporter = new ClientTelemetryReporter();
+            telemetryReporter.configure(config.originals(clientIdOverride));
+            reporters.add(telemetryReporter);
         }
         return reporters;
     }

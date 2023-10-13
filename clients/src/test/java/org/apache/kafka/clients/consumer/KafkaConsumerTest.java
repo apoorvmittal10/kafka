@@ -2726,7 +2726,9 @@ public class KafkaConsumerTest {
                 requestTimeoutMs,
                 defaultApiTimeoutMs,
                 assignors,
-                groupId);
+                groupId,
+                true,
+                null);
     }
 
     private static class FetchInfo {

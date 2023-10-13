@@ -2050,6 +2050,7 @@ public final class QuorumController implements Controller {
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
                 configurationControl.incrementalAlterConfigs(configChanges, false);
+            System.out.println("[APM] config alter result: " + result + " validate only: " + validateOnly);
             if (validateOnly) {
                 return result.withoutRecords();
             } else {

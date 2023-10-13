@@ -230,6 +230,9 @@ public class ConsumerConfig extends AbstractConfig {
      */
     public static final String RETRY_BACKOFF_MS_CONFIG = CommonClientConfigs.RETRY_BACKOFF_MS_CONFIG;
 
+    /** <code>enable.metrics.push</code> */
+    public static final String ENABLE_METRICS_PUSH_CONFIG = CommonClientConfigs.ENABLE_METRICS_PUSH_CONFIG;
+
     /**
      * <code>retry.backoff.max.ms</code>
      */
@@ -469,6 +472,11 @@ public class ConsumerConfig extends AbstractConfig {
                                         atLeast(0L),
                                         Importance.LOW,
                                         CommonClientConfigs.RECONNECT_BACKOFF_MAX_MS_DOC)
+                                .define(ENABLE_METRICS_PUSH_CONFIG,
+                                        Type.BOOLEAN,
+                                        true,
+                                        Importance.LOW,
+                                        CommonClientConfigs.ENABLE_METRICS_PUSH_DOC)
                                 .define(RETRY_BACKOFF_MS_CONFIG,
                                         Type.LONG,
                                         CommonClientConfigs.DEFAULT_RETRY_BACKOFF_MS,
