@@ -47,7 +47,7 @@ import org.apache.kafka.common.protocol.Errors._
 import org.apache.kafka.common.protocol.{ApiKeys, ApiMessage, Errors}
 import org.apache.kafka.common.requests._
 import org.apache.kafka.common.resource.Resource.CLUSTER_NAME
-import org.apache.kafka.common.resource.ResourceType.{CLUSTER, TOPIC, USER}
+import org.apache.kafka.common.resource.ResourceType.{CLIENT_METRICS, CLUSTER, TOPIC, USER}
 import org.apache.kafka.common.utils.Time
 import org.apache.kafka.common.Uuid
 import org.apache.kafka.controller.ControllerRequestContext.requestTimeoutMsToDeadlineNs
@@ -91,6 +91,9 @@ class ControllerApis(
   def close(): Unit = aclApis.close()
 
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
+    if (request.header.apiKey() != ApiKeys.BROKER_HEARTBEAT) {
+      System.out.println("[APM] - Received controller request: " + request + " apikey: " + request.header.apiKey())
+    }
     try {
       val handlerFuture: CompletableFuture[Unit] = request.header.apiKey match {
         case ApiKeys.FETCH => handleFetch(request)
@@ -482,6 +485,12 @@ class ControllerApis(
           new ApiError(NONE)
         } else {
           new ApiError(TOPIC_AUTHORIZATION_FAILED)
+        }
+      case ConfigResource.Type.CLIENT_METRICS =>
+        if (authHelper.authorize(requestContext, ALTER_CONFIGS, CLIENT_METRICS, resource.name)) {
+          new ApiError(NONE)
+        } else {
+          new ApiError(CLUSTER_AUTHORIZATION_FAILED)
         }
       case rt => new ApiError(INVALID_REQUEST, s"Unexpected resource type $rt.")
     }
@@ -930,7 +939,7 @@ class ControllerApis(
         CreateDelegationTokenResponse.prepareResponse(request.context.requestVersion, requestThrottleMs,
           Errors.DELEGATION_TOKEN_REQUEST_NOT_ALLOWED, owner, requester))
       CompletableFuture.completedFuture[Unit](())
-    } else if (!owner.equals(requester) && 
+    } else if (!owner.equals(requester) &&
       !authHelper.authorize(request.context, CREATE_TOKENS, USER, owner.toString)) {
       // Requester is always allowed to create token for self
       requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>

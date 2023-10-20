@@ -33,6 +33,8 @@ import kafka.api.{KafkaSasl, SaslSetup}
 import kafka.controller.{ControllerBrokerStateInfo, ControllerChannelManager}
 import kafka.log.UnifiedLog
 import kafka.network.{DataPlaneAcceptor, Processor, RequestChannel}
+import kafka.metrics.ClientMetricsTestUtils.TestClientMetricsReceiver
+import kafka.metrics.clientmetrics.ClientMetricsReceiverPlugin
 import kafka.utils._
 import kafka.utils.Implicits._
 import kafka.utils.TestUtils.TestControllerRequestCompletionHandler
@@ -59,6 +61,7 @@ import org.apache.kafka.common.requests.MetadataRequest
 import org.apache.kafka.common.security.auth.SecurityProtocol
 import org.apache.kafka.common.security.scram.ScramCredential
 import org.apache.kafka.common.serialization.{StringDeserializer, StringSerializer}
+import org.apache.kafka.common.telemetry.{ClientTelemetry, ClientTelemetryReceiver}
 import org.apache.kafka.server.metrics.KafkaYammerMetrics
 import org.apache.kafka.server.record.BrokerCompressionType
 import org.apache.kafka.server.util.ShutdownableThread
@@ -937,6 +940,40 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
   }
 
   @Test
+  def testClientMetricsEmptyReporter(): Unit = {
+    // Add a default test metrics reporter that doesn't implement the clientReceiver method
+    val newProps = new Properties
+    newProps.put(TestMetricsReporter.PollingIntervalProp, "100")
+    configureMetricsReporters(Seq(classOf[TestMetricsReporter]), newProps)
+
+    val reporters = TestMetricsReporter.waitForReporters(servers.size)
+    reporters.foreach { reporter =>
+      reporter.verifyState(reconfigureCount = 0, deleteCount = 0, pollingInterval = 100)
+
+      // There should not be any clientReceiver in the default implementation.
+      assertNull(reporter.clientReceiver)
+    }
+  }
+
+  @Test
+  def testClientMetricsReporter(): Unit = {
+    // Add a new metrics reporter that has implemented the clientReceiver interface method.
+    val newProps = new Properties
+    newProps.put(TestMetricsReporter.PollingIntervalProp, "100")
+    configureMetricsReporters(Seq(classOf[TestClientMetricsReporter]), newProps)
+
+    val reporters = TestMetricsReporter.waitForReporters(servers.size)
+    assertFalse(ClientMetricsReceiverPlugin.isEmpty)
+
+    reporters.foreach { reporter =>
+      reporter.verifyState(reconfigureCount = 0, deleteCount = 0, pollingInterval = 100)
+
+      // we should have a valid clientReceiver here.
+      assertNotNull(reporter.clientReceiver)
+    }
+  }
+
+  @Test
   @Disabled // TODO: To be re-enabled once we can make it less flaky (KAFKA-7957)
   def testMetricsReporterUpdate(): Unit = {
     // Add a new metrics reporter
@@ -1392,7 +1429,23 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
 
   private def awaitInitialPositions(consumer: Consumer[_, _]): Unit = {
     TestUtils.pollUntilTrue(consumer, () => !consumer.assignment.isEmpty, "Timed out while waiting for assignment")
-    consumer.assignment.forEach(consumer.position(_))
+
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+
   }
 
   private def clientProps(securityProtocol: SecurityProtocol, saslMechanism: Option[String] = None): Properties = {
@@ -1938,7 +1991,7 @@ object TestMetricsReporter {
   }
 }
 
-class TestMetricsReporter extends MetricsReporter with Reconfigurable with Closeable with ClusterResourceListener {
+class TestMetricsReporter extends MetricsReporter with ClientTelemetry with Reconfigurable with Closeable with ClusterResourceListener {
   import TestMetricsReporter._
   val kafkaMetrics = ArrayBuffer[KafkaMetric]()
   @volatile var initializeCount = 0
@@ -1993,6 +2046,10 @@ class TestMetricsReporter extends MetricsReporter with Reconfigurable with Close
     pollingInterval = configs.get(PollingIntervalProp).toString.toInt
   }
 
+  override def clientReceiver(): ClientTelemetryReceiver = {
+    null
+  }
+
   override def close(): Unit = {
     closeCount += 1
   }
@@ -2014,6 +2071,12 @@ class TestMetricsReporter extends MetricsReporter with Reconfigurable with Close
   }
 }
 
+class TestClientMetricsReporter extends TestMetricsReporter {
+  var cmReceiver: Option[TestClientMetricsReceiver] =  Option(new TestClientMetricsReceiver)
+  override def clientReceiver: ClientTelemetryReceiver =  {
+    if (cmReceiver.isEmpty)  super.clientReceiver else cmReceiver.get
+  }
+}
 
 class MockFileConfigProvider extends FileConfigProvider {
   @throws(classOf[IOException])

@@ -22,6 +22,7 @@ import org.apache.kafka.common.config.SaslConfigs;
 import org.apache.kafka.common.metrics.JmxReporter;
 import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.security.auth.SecurityProtocol;
+import org.apache.kafka.common.telemetry.ClientTelemetryReporter;
 import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -291,6 +292,12 @@ public class CommonClientConfigs {
             JmxReporter jmxReporter = new JmxReporter();
             jmxReporter.configure(config.originals(clientIdOverride));
             reporters.add(jmxReporter);
+        }
+        if (config.getBoolean(CommonClientConfigs.ENABLE_METRICS_PUSH_CONFIG) &&
+            reporters.stream().noneMatch(r -> ClientTelemetryReporter.class.equals(r.getClass()))) {
+            ClientTelemetryReporter telemetryReporter = new ClientTelemetryReporter();
+            telemetryReporter.configure(config.originals(clientIdOverride));
+            reporters.add(telemetryReporter);
         }
         return reporters;
     }

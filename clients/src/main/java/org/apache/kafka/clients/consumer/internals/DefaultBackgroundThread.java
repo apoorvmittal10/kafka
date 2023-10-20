@@ -140,14 +140,15 @@ public class DefaultBackgroundThread extends KafkaThread {
             this.config = config;
             this.metadata = metadata;
             final NetworkClient networkClient = ClientUtils.createNetworkClient(config,
-                metrics,
-                CONSUMER_METRIC_GROUP_PREFIX,
-                logContext,
-                apiVersions,
-                time,
-                CONSUMER_MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
-                metadata,
-                fetcherThrottleTimeSensor);
+                    metrics,
+                    CONSUMER_METRIC_GROUP_PREFIX,
+                    logContext,
+                    apiVersions,
+                    time,
+                    CONSUMER_MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
+                    metadata,
+                    fetcherThrottleTimeSensor,
+                    null);
             this.networkClientDelegate = new NetworkClientDelegate(
                 this.time,
                 this.config,

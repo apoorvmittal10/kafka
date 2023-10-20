@@ -22,7 +22,12 @@ import org.apache.kafka.common.message.PushTelemetryResponseData;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.ByteBufferAccessor;
 import org.apache.kafka.common.protocol.Errors;
+import org.apache.kafka.common.record.CompressionType;
+import org.apache.kafka.common.record.RecordBatch;
+import org.apache.kafka.common.utils.BufferSupplier;
+import org.apache.kafka.common.utils.Utils;
 
+import java.io.InputStream;
 import java.nio.ByteBuffer;
 
 public class PushTelemetryRequest extends AbstractRequest {
@@ -69,6 +74,45 @@ public class PushTelemetryRequest extends AbstractRequest {
     @Override
     public PushTelemetryRequestData data() {
         return data;
+    }
+
+    public PushTelemetryResponse createResponse(int throttleTimeMs, Errors errors) {
+        PushTelemetryResponseData responseData = new PushTelemetryResponseData();
+        responseData.setErrorCode(errors.code());
+        responseData.setThrottleTimeMs(throttleTimeMs);
+        return new PushTelemetryResponse(responseData);
+    }
+
+    public String getMetricsContentType() {
+        // Future versions of PushTelemetryRequest and GetTelemetrySubscriptionsRequest may include a content-type
+        // field to allow for updated OTLP format versions (or additional formats), but this field is currently not
+        // included since only one format is specified in the current proposal of the kip-714
+        return "OTLP";
+    }
+
+    public ByteBuffer getMetricsData() throws Exception {
+        CompressionType cType = CompressionType.forId(this.data.compressionType());
+        System.out.println("[APM] Compressions type: " + cType + " length: " + this.data.metrics().length);
+        ByteBuffer metricsData = (cType == CompressionType.NONE) ?
+            ByteBuffer.wrap(this.data.metrics()) : decompressMetricsData(cType, this.data.metrics());
+        return metricsData.asReadOnlyBuffer();
+    }
+
+    public byte[] getMetricsData1() throws Exception {
+//        CompressionType cType = CompressionType.forId(this.data.compressionType());
+//        System.out.println("[APM] Compressions type: " + cType + " length: " + this.data.metrics().length);
+//        ByteBuffer metricsData = (cType == CompressionType.NONE) ?
+//            ByteBuffer.wrap(this.data.metrics()) : decompressMetricsData(cType, this.data.metrics());
+        return this.data.metrics();
+    }
+
+    public static ByteBuffer decompressMetricsData(CompressionType compressionType, byte[] metrics) throws Exception {
+        ByteBuffer data = ByteBuffer.wrap(metrics);
+        ByteBuffer decompressedData = ByteBuffer.allocate(data.capacity() * 4);
+        try (InputStream in = compressionType.wrapForInput(data, RecordBatch.CURRENT_MAGIC_VALUE, BufferSupplier.create())) {
+            Utils.readFully(in, decompressedData);
+        }
+        return decompressedData;
     }
 
     public static PushTelemetryRequest parse(ByteBuffer buffer, short version) {

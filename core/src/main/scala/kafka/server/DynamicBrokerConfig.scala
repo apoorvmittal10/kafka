@@ -23,6 +23,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kafka.cluster.EndPoint
 import kafka.log.{LogCleaner, LogManager}
+import kafka.metrics.clientmetrics.ClientMetricsReceiverPlugin
 import kafka.network.{DataPlaneAcceptor, SocketServer}
 import kafka.server.DynamicBrokerConfig._
 import kafka.server.KafkaRaftServer.BrokerRole
@@ -35,6 +36,7 @@ import org.apache.kafka.common.metrics.{JmxReporter, Metrics, MetricsReporter}
 import org.apache.kafka.common.config.types.Password
 import org.apache.kafka.common.network.{ListenerName, ListenerReconfigurable}
 import org.apache.kafka.common.security.authenticator.LoginManager
+import org.apache.kafka.common.telemetry.ClientTelemetry
 import org.apache.kafka.common.utils.{ConfigUtils, Utils}
 import org.apache.kafka.server.config.ServerTopicConfigSynonyms
 import org.apache.kafka.server.log.remote.storage.RemoteLogManagerConfig
@@ -913,6 +915,13 @@ class DynamicMetricReporterState(brokerId: Int, config: KafkaConfig, metrics: Me
     reporters.forEach { reporter =>
       metrics.addReporter(reporter)
       currentReporters += reporter.getClass.getName -> reporter
+      val cmReceiver = reporter match {
+        case telemetry: ClientTelemetry => telemetry.clientReceiver()
+        case _ => null
+      }
+      if (cmReceiver != null) {
+        ClientMetricsReceiverPlugin.add(cmReceiver)
+      }
     }
     KafkaBroker.notifyClusterListeners(clusterId, reporters.asScala)
   }

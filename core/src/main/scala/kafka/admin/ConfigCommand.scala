@@ -44,7 +44,7 @@ import scala.jdk.CollectionConverters._
 import scala.collection._
 
 /**
- * This script can be used to change configs for topics/clients/users/brokers/ips dynamically
+ * This script can be used to change configs for topics/clients/users/brokers/ips/client-metrics dynamically
  * An entity described or altered by the command may be one of:
  * <ul>
  *     <li> topic: --topic <topic> OR --entity-type topics --entity-name <topic>
@@ -55,6 +55,7 @@ import scala.collection._
  *     <li> broker: --broker <broker-id> OR --entity-type brokers --entity-name <broker-id>
  *     <li> broker-logger: --broker-logger <broker-id> OR --entity-type broker-loggers --entity-name <broker-id>
  *     <li> ip: --ip <ip> OR --entity-type ips --entity-name <ip>
+ *     <li> client-metrics: --client-metrics <subscription-id> OR --entity-type client-metrics --entity-name <subscription-id>
  * </ul>
  * --entity-type <users|clients|brokers|ips> --entity-default may be specified in place of --entity-type <users|clients|brokers|ips> --entity-name <entityName>
  * when describing or altering default configuration for users, clients, brokers, or ips, respectively.
@@ -445,6 +446,11 @@ object ConfigCommand extends Logging {
         if (unknownConfigs.nonEmpty)
           throw new IllegalArgumentException(s"Only connection quota configs can be added for '${ConfigType.Ip}' using --bootstrap-server. Unexpected config names: ${unknownConfigs.mkString(",")}")
         alterQuotaConfigs(adminClient, entityTypes, entityNames, configsToBeAddedMap, configsToBeDeleted)
+      case ConfigType.ClientMetrics =>
+        val unknownConfigs = (configsToBeAdded.keys ++ configsToBeDeleted).filterNot(key => DynamicConfig.Ip.names.contains(key))
+        if (unknownConfigs.nonEmpty)
+          throw new IllegalArgumentException(s"Only connection quota configs can be added for '${ConfigType.Ip}' using --bootstrap-server. Unexpected config names: ${unknownConfigs.mkString(",")}")
+        alterQuotaConfigs(adminClient, entityTypes, entityNames, configsToBeAddedMap, configsToBeDeleted)
       case _ => throw new IllegalArgumentException(s"Unsupported entity type: $entityTypeHead")
     }
 
@@ -518,7 +524,7 @@ object ConfigCommand extends Logging {
     val describeAll = opts.options.has(opts.allOpt)
 
     entityTypes.head match {
-      case ConfigType.Topic | ConfigType.Broker | BrokerLoggerConfigType =>
+      case ConfigType.Topic | ConfigType.Broker | BrokerLoggerConfigType | ConfigType.ClientMetrics =>
         describeResourceConfig(adminClient, entityTypes.head, entityNames.headOption, describeAll)
       case ConfigType.User | ConfigType.Client =>
         describeClientQuotaAndUserScramCredentialConfigs(adminClient, entityTypes, entityNames)
@@ -534,7 +540,7 @@ object ConfigCommand extends Logging {
       .getOrElse(entityType match {
         case ConfigType.Topic =>
           adminClient.listTopics(new ListTopicsOptions().listInternal(true)).names().get().asScala.toSeq
-        case ConfigType.Broker | BrokerLoggerConfigType =>
+        case ConfigType.Broker | BrokerLoggerConfigType | ConfigType.ClientMetrics =>
           adminClient.describeCluster(new DescribeClusterOptions()).nodes().get().asScala.map(_.idString).toSeq :+ BrokerDefaultEntityName
         case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
       })
@@ -576,6 +582,8 @@ object ConfigCommand extends Logging {
         if (entityName.nonEmpty)
           validateBrokerId()
         (ConfigResource.Type.BROKER_LOGGER, None)
+      case ConfigType.ClientMetrics =>
+        (ConfigResource.Type.CLIENT_METRICS, Some(ConfigEntry.ConfigSource.DYNAMIC_CLIENT_METRICS_CONFIG))
       case entityType => throw new IllegalArgumentException(s"Invalid entity type: $entityType")
     }
 

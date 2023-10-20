@@ -39,6 +39,7 @@ import org.apache.kafka.clients.consumer.internals.events.NewTopicsMetadataUpdat
 import org.apache.kafka.clients.consumer.internals.events.OffsetFetchApplicationEvent;
 import org.apache.kafka.clients.consumer.internals.events.ResetPositionsApplicationEvent;
 import org.apache.kafka.clients.consumer.internals.events.ValidatePositionsApplicationEvent;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.KafkaException;
 import org.apache.kafka.common.Metric;
 import org.apache.kafka.common.MetricName;
@@ -52,6 +53,7 @@ import org.apache.kafka.common.errors.WakeupException;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
@@ -137,7 +139,9 @@ public class PrototypeAsyncConsumer<K, V> implements Consumer<K, V> {
         this.log = logContext.logger(getClass());
         this.deserializers = new Deserializers<>(config, keyDeserializer, valueDeserializer);
         this.subscriptions = createSubscriptionState(config, logContext);
-        this.metrics = createMetrics(config, time);
+        List<MetricsReporter> reporters = CommonClientConfigs.metricsReporters(config.getString(
+            ConsumerConfig.CLIENT_ID_CONFIG), config);
+        this.metrics = createMetrics(config, time, reporters);
         List<ConsumerInterceptor<K, V>> interceptorList = configuredConsumerInterceptors(config);
         ClusterResourceListeners clusterResourceListeners = ClientUtils.configureClusterResourceListeners(
                 metrics.reporters(),
