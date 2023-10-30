@@ -160,6 +160,9 @@ class KafkaApis(val requestChannel: RequestChannel,
    * Top-level method that handles all requests and multiplexes to the right api
    */
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
+//    if (request.header.apiKey() != ApiKeys.BROKER_HEARTBEAT) {
+//      System.out.println("[APM] - Broker api request: " + request + " apikey: " + request.header.apiKey())
+//    }
     def handleError(e: Throwable): Unit = {
       error(s"Unexpected error handling request ${request.requestDesc(true)} " +
         s"with context ${request.context}", e)
@@ -3694,14 +3697,28 @@ class KafkaApis(val requestChannel: RequestChannel,
 
   // Just a place holder for now.
   def handleGetTelemetrySubscriptionsRequest(request: RequestChannel.Request): Unit = {
-    requestHelper.sendMaybeThrottle(request, request.body[GetTelemetrySubscriptionsRequest].getErrorResponse(Errors.UNSUPPORTED_VERSION.exception))
-    CompletableFuture.completedFuture[Unit](())
+    val subscriptionRequest = request.body[GetTelemetrySubscriptionsRequest]
+    try {
+      requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+        ClientMetricsManager.processGetTelemetrySubscriptionRequest(request, requestThrottleMs))
+    } catch {
+      case e: Exception =>
+        requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+          subscriptionRequest.getErrorResponse(requestThrottleMs, Errors.INVALID_REQUEST.exception))
+    }
   }
 
   // Just a place holder for now.
   def handlePushTelemetryRequest(request: RequestChannel.Request): Unit = {
-    requestHelper.sendMaybeThrottle(request, request.body[PushTelemetryRequest].getErrorResponse(Errors.UNSUPPORTED_VERSION.exception))
-    CompletableFuture.completedFuture[Unit](())
+    val pushTelemetryRequest = request.body[PushTelemetryRequest]
+    try {
+      requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+        ClientMetricsManager.processPushTelemetryRequest(request, requestThrottleMs))
+    } catch {
+      case e: Exception =>
+        requestHelper.sendResponseMaybeThrottle(request, requestThrottleMs =>
+          pushTelemetryRequest.getErrorResponse(requestThrottleMs, Errors.INVALID_REQUEST.exception))
+    }
   }
 
   private def updateRecordConversionStats(request: RequestChannel.Request,

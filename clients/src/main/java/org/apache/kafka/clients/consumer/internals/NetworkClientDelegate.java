@@ -30,6 +30,7 @@ import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.requests.AbstractRequest;
+import org.apache.kafka.common.telemetry.internals.ClientTelemetrySender;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Timer;
@@ -367,7 +368,8 @@ public class NetworkClientDelegate implements AutoCloseable {
                                                            final ConsumerConfig config,
                                                            final ApiVersions apiVersions,
                                                            final Metrics metrics,
-                                                           final FetchMetricsManager fetchMetricsManager) {
+                                                           final FetchMetricsManager fetchMetricsManager,
+                                                           final ClientTelemetrySender clientTelemetrySender) {
         return new CachedSupplier<NetworkClientDelegate>() {
             @Override
             protected NetworkClientDelegate create() {
@@ -379,7 +381,8 @@ public class NetworkClientDelegate implements AutoCloseable {
                         time,
                         CONSUMER_MAX_INFLIGHT_REQUESTS_PER_CONNECTION,
                         metadata,
-                        fetchMetricsManager.throttleTimeSensor());
+                        fetchMetricsManager.throttleTimeSensor(),
+                        clientTelemetrySender);
                 return new NetworkClientDelegate(time, config, logContext, client);
             }
         };

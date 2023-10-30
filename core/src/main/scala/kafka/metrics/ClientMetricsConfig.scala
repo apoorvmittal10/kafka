@@ -16,6 +16,7 @@
  */
 package kafka.metrics
 
+import kafka.metrics.ClientMetricsConfig.ClientMetrics.{ClientMatchPattern, PushIntervalMs, SubscriptionMetrics, configDef}
 import org.apache.kafka.common.config.ConfigDef
 import org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM
 import org.apache.kafka.common.config.ConfigDef.Type.{INT, LIST}
@@ -23,6 +24,8 @@ import org.apache.kafka.common.errors.InvalidRequestException
 
 import java.util
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
+import scala.collection.mutable.ListBuffer
 
 /**
  * Client metric configuration related parameters and the supporting methods like validation and update methods
@@ -34,11 +37,11 @@ import java.util.Properties
  * <p>
  * {
  * <ul>
- * <li> subscriptionId: Name/ID supplied by CLI during the creation of the client metric subscription.
- * <li> subscribedMetrics: List of metric prefixes
- * <li> pushIntervalMs: A positive integer value >=0  tells the client that how often a client can push the metrics
- * <li> matchingPatternsList: List of client matching patterns, that are used by broker to match the client instance
- * with the subscription.
+ *   <li> subscriptionId: Name/ID supplied by CLI during the creation of the client metric subscription.
+ *   <li> subscribedMetrics: List of metric prefixes
+ *   <li> pushIntervalMs: A positive integer value >=0  tells the client that how often a client can push the metrics
+ *   <li> matchingPatternsList: List of client matching patterns, that are used by broker to match the client instance
+ *   with the subscription.
  * </ul>
  * }
  * <p>
@@ -83,7 +86,7 @@ object ClientMetricsConfig {
     val CLIENT_SOURCE_PORT = "client_source_port"
 
     val matchersList = List(CLIENT_ID, CLIENT_INSTANCE_ID, CLIENT_SOFTWARE_NAME,
-      CLIENT_SOFTWARE_VERSION, CLIENT_SOURCE_ADDRESS, CLIENT_SOURCE_PORT)
+                            CLIENT_SOFTWARE_VERSION, CLIENT_SOURCE_ADDRESS, CLIENT_SOURCE_PORT)
 
     def isValidParam(param: String): Boolean = matchersList.contains(param)
   }
@@ -136,11 +139,43 @@ object ClientMetricsConfig {
     }
   }
 
-  def updateClientSubscription(subscriptionId: String, properties: Properties): Unit = {
-    // TODO: Implement the update logic.
+  private val subscriptionMap = new ConcurrentHashMap[String, SubscriptionInfo]
+
+  def getClientSubscriptionInfo(subscriptionId :String): SubscriptionInfo  =  subscriptionMap.get(subscriptionId)
+  def clearClientSubscriptions() = subscriptionMap.clear
+  def getSubscriptionsCount = subscriptionMap.size
+  def getClientSubscriptions = subscriptionMap.values
+
+  private def toList(prop: Any): List[String] = {
+    val value: util.List[_] = prop.asInstanceOf[util.List[_]]
+    val valueList =  new ListBuffer[String]()
+    value.forEach(x => valueList += x.asInstanceOf[String])
+    valueList.toList
+  }
+
+  def updateClientSubscription(subscriptionId :String, properties: Properties): Unit = {
+    val parsed = configDef.parse(properties)
+//    val javaFalse = java.lang.Boolean.FALSE
+//    val subscriptionDeleted = parsed.getOrDefault(DeleteSubscription, javaFalse).asInstanceOf[Boolean]
+    val subscriptionDeleted = false
+  if (subscriptionDeleted) {
+      val deletedSubscription = subscriptionMap.remove(subscriptionId)
+      ClientMetricsCache.getInstance.invalidate(deletedSubscription, null)
+    } else {
+      val clientMatchPattern = toList(parsed.get(ClientMatchPattern))
+      val pushInterval = parsed.get(PushIntervalMs).asInstanceOf[Int]
+//      val allMetricsSubscribed = parsed.getOrDefault(AllMetricsFlag, javaFalse).asInstanceOf[Boolean]
+      val allMetricsSubscribed = false
+    val metrics = if (allMetricsSubscribed) List("") else toList(parsed.get(SubscriptionMetrics))
+      val newSubscription =
+        new SubscriptionInfo(subscriptionId, metrics, pushInterval, clientMatchPattern)
+      val oldSubscription = subscriptionMap.put(subscriptionId, newSubscription)
+      ClientMetricsCache.getInstance.invalidate(oldSubscription, newSubscription)
+    }
   }
 
   def validateConfig(subscriptionId: String, configs: Properties): Unit = {
     ClientMetrics.validate(subscriptionId, configs)
+    // System.out.println("[APM] client validation successful")
   }
 }

@@ -91,6 +91,9 @@ class ControllerApis(
   def close(): Unit = aclApis.close()
 
   override def handle(request: RequestChannel.Request, requestLocal: RequestLocal): Unit = {
+    if (request.header.apiKey() != ApiKeys.BROKER_HEARTBEAT) {
+      System.out.println("[APM] - Received controller request: " + request + " apikey: " + request.header.apiKey())
+    }
     try {
       val handlerFuture: CompletableFuture[Unit] = request.header.apiKey match {
         case ApiKeys.FETCH => handleFetch(request)

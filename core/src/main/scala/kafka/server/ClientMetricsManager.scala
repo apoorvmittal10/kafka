@@ -16,22 +16,224 @@
  */
 package kafka.server
 
-import kafka.metrics.ClientMetricsConfig
+import kafka.Kafka.{info, warn}
+import kafka.metrics.{ClientMetricsCache, ClientMetricsConfig1, ClientMetricsReceiverPlugin, ClientMetricsMetadata, ClientMetricsInstanceState}
+import kafka.network.RequestChannel
+import kafka.server.ClientMetricsManager.{getCurrentTime, getSupportedCompressionTypes}
+import org.apache.kafka.common.errors.ClientMetricsReceiverPluginNotFoundException
+import org.apache.kafka.common.{KafkaException, Uuid}
+import org.apache.kafka.common.message.GetTelemetrySubscriptionsResponseData
+import org.apache.kafka.common.protocol.Errors
+import org.apache.kafka.common.record.CompressionType
+import org.apache.kafka.common.requests.{GetTelemetrySubscriptionsRequest, GetTelemetrySubscriptionsResponse, PushTelemetryRequest, PushTelemetryResponse, RequestContext}
 
-import java.util.Properties
+import java.util.{Calendar, Properties}
+import scala.collection.mutable.ListBuffer
+import scala.jdk.CollectionConverters._
 
 object ClientMetricsManager {
-  private val Instance = new ClientMetricsManager
+  private val _instance = new ClientMetricsManager
+  def getInstance = _instance
+  def getCurrentTime = Calendar.getInstance.getTime.getTime
 
-  def getInstance: ClientMetricsManager = Instance
+  def getSupportedCompressionTypes: List[java.lang.Byte] = {
+    val compressionTypes = new ListBuffer[java.lang.Byte]
+    CompressionType.values.filter(x => x != CompressionType.NONE).foreach(x => compressionTypes.append(x.id.toByte))
+    compressionTypes.toList
+  }
+
+  def processGetTelemetrySubscriptionRequest(request: RequestChannel.Request,
+                                             throttleMs: Int): GetTelemetrySubscriptionsResponse = {
+    val subscriptionRequest = request.body[GetTelemetrySubscriptionsRequest]
+    if (ClientMetricsReceiverPlugin.isEmpty) {
+      subscriptionRequest.getErrorResponse(throttleMs, new ClientMetricsReceiverPluginNotFoundException("Broker does not have any configured client metrics receiver plugin"))
+    } else {
+      val clientInfo = ClientMetricsMetadata(request, subscriptionRequest.data.clientInstanceId.toString)
+      _instance.processGetSubscriptionRequest(subscriptionRequest, clientInfo, throttleMs)
+    }
+  }
+
+  def processPushTelemetryRequest(request: RequestChannel.Request, throttleMs: Int): PushTelemetryResponse = {
+    val pushTelemetryRequest = request.body[PushTelemetryRequest]
+    if (ClientMetricsReceiverPlugin.isEmpty) {
+      System.out.println("[APM] - ClientMetricsReceiverPlugin is empty")
+      pushTelemetryRequest.getErrorResponse(throttleMs, new ClientMetricsReceiverPluginNotFoundException("Broker does not have any configured client metrics receiver plugin"))
+    } else {
+      val clientInfo = ClientMetricsMetadata(request, pushTelemetryRequest.data.clientInstanceId.toString)
+      System.out.println("[APM] - client info: " + clientInfo)
+      _instance.processPushTelemetryRequest(pushTelemetryRequest, request.context, clientInfo, throttleMs)
+    }
+  }
 }
 
 class ClientMetricsManager {
 
-  def updateSubscription(groupId :String, properties :Properties) = {
-    ClientMetricsConfig.updateClientSubscription(groupId, properties)
+  class ClientMetricsException(val s: String, var errorCode: Errors) extends KafkaException(s) {
+    def getErrorCode: Errors = this.errorCode
   }
 
-  // Other methods to be implemented to support client telemetry metrics.
+  def getClientInstance(id: Uuid) : Option[ClientMetricsInstanceState] =  {
+    Option(id) match {
+      case None | Some(Uuid.ZERO_UUID) => None
+      case _ => ClientMetricsCache.getInstance.get(id)
+    }
+  }
+
+  // Generates a new random client id and makes sure that it was not assigned to any of the previous clients
+  def generateNewClientId(): Uuid = {
+    var id = Uuid.randomUuid()
+    while (ClientMetricsCache.getInstance.get(id).isDefined) {
+      id = Uuid.randomUuid()
+    }
+    id
+  }
+
+  def processGetSubscriptionRequest(subscriptionRequest: GetTelemetrySubscriptionsRequest,
+                                    clientInfo: ClientMetricsMetadata,
+                                    throttleMs: Int): GetTelemetrySubscriptionsResponse = {
+
+    val clientInstanceId = Option(subscriptionRequest.data().clientInstanceId()) match {
+      case None | Some(Uuid.ZERO_UUID) => generateNewClientId()
+
+      case _ =>  subscriptionRequest.data().clientInstanceId
+    }
+
+    val clientInstance = getClientInstance(clientInstanceId).getOrElse(createClientInstance(clientInstanceId, clientInfo))
+    val data =  new GetTelemetrySubscriptionsResponseData()
+        .setThrottleTimeMs(throttleMs)
+        .setClientInstanceId(clientInstanceId)
+        .setSubscriptionId(clientInstance.getSubscriptionId) // TODO: should we use LONG instead of int?
+        .setAcceptedCompressionTypes(getSupportedCompressionTypes.asJava)
+        .setPushIntervalMs(clientInstance.getPushIntervalMs)
+        .setDeltaTemporality(true)
+        .setErrorCode(Errors.NONE.code())
+        // TODO (Apoorv): Fix persisted metrics as that's adding additional list [] in metric name.
+        .setRequestedMetrics(clientInstance.getMetrics.asJava)
+
+    if (clientInstance.isDisabledForMetricsCollection) {
+      info(s"Metrics collection is disabled for the client: ${clientInstance.getId.toString}")
+    }
+
+    clientInstance.updateLastAccessTs(getCurrentTime)
+
+    new GetTelemetrySubscriptionsResponse(data)
+  }
+
+  def validatePushRequest(pushTelemetryRequest: PushTelemetryRequest,
+                          clientInfo: ClientMetricsMetadata): Unit = {
+
+    def isSupportedCompressionType(id: Int) : Boolean = {
+      try {
+        CompressionType.forId(id)
+        true
+      } catch {
+        case e: IllegalArgumentException => false
+      }
+    }
+
+    val clientInstanceId = Option(pushTelemetryRequest.data.clientInstanceId) match {
+      case None | Some(Uuid.ZERO_UUID) =>
+        val msg = String.format("Invalid request from the client [%s], missing client instance id", clientInfo.getClientId)
+        throw new ClientMetricsException(msg, Errors.INVALID_REQUEST)
+      case _ => pushTelemetryRequest.data.clientInstanceId
+    }
+
+    System.out.println("[APM] - client instance id: " + clientInstanceId)
+    val clientInstance = getClientInstance(clientInstanceId).getOrElse(createClientInstance(clientInstanceId, clientInfo))
+
+    // Once client set the state to Terminating do not accept any further requests.
+    if (clientInstance.isClientTerminating) {
+      val msg = String.format(
+        "Client [%s] sent the previous request with state terminating to TRUE, can not accept any requests after that",
+        pushTelemetryRequest.data.clientInstanceId.toString)
+      throw new ClientMetricsException(msg, Errors.INVALID_REQUEST)
+    }
+
+    // Make sure that this request is arrived after the next push interval, but this check would be bypassed if the
+    // client has set the Terminating flag.
+    if (!clientInstance.canAcceptPushRequest && !pushTelemetryRequest.data.terminating) {
+      val msg = String.format("Request from the client [%s] arrived before the next push interval time",
+          pushTelemetryRequest.data.clientInstanceId.toString)
+      throw new ClientMetricsException(msg, Errors.CLIENT_METRICS_RATE_LIMITED)
+    }
+
+    if (pushTelemetryRequest.data.subscriptionId != clientInstance.getSubscriptionId) {
+      val msg = String.format("Client's subscription id [%s] != Broker's cached client's subscription id [%s]",
+        pushTelemetryRequest.data.subscriptionId.toString, clientInstance.getSubscriptionId.toString)
+      throw new ClientMetricsException(msg, Errors.UNKNOWN_CLIENT_METRICS_SUBSCRIPTION_ID)
+    }
+
+    if (!isSupportedCompressionType(pushTelemetryRequest.data().compressionType)) {
+      val msg = String.format("Unknown compression type [%s] is received in PushTelemetryRequest from %s",
+        pushTelemetryRequest.data().compressionType().toString, pushTelemetryRequest.data.clientInstanceId.toString)
+      throw new ClientMetricsException(msg, Errors.UNSUPPORTED_COMPRESSION_TYPE)
+    }
+
+  }
+
+  def processPushTelemetryRequest(pushTelemetryRequest: PushTelemetryRequest,
+                                  requestContext: RequestContext,
+                                  clientInfo: ClientMetricsMetadata,
+                                  throttleMs: Int): PushTelemetryResponse = {
+
+    def createResponse(errors: Option[Errors]) : PushTelemetryResponse = {
+      System.out.println("[APM] - create response")
+      var adjustedThrottleMs = throttleMs
+      val clientInstance = getClientInstance(pushTelemetryRequest.data.clientInstanceId)
+
+      // Before sending the response make sure to update the book keeping markers like
+      // lastAccessTime, isTerminating flag etc..
+      if (!clientInstance.isEmpty) {
+        System.out.println("[APM] - clientInstance is not empty")
+        adjustedThrottleMs = Math.max(clientInstance.get.getAdjustedPushInterval, throttleMs)
+        clientInstance.get.updateLastAccessTs(getCurrentTime)
+
+        // update the client terminating flag only once
+        if (!pushTelemetryRequest.data.terminating) {
+          clientInstance.get.setTerminatingFlag(pushTelemetryRequest.data.terminating)
+        }
+      }
+
+      pushTelemetryRequest.createResponse(adjustedThrottleMs, errors.getOrElse(Errors.NONE))
+    }
+
+    var errorCode = Errors.NONE
+    try {
+      System.out.println("[APM] - validate")
+      // Validate the push request parameters
+      validatePushRequest(pushTelemetryRequest, clientInfo)
+
+      System.out.println("[APM] - metrics")
+      // Push the metrics to the external client receiver plugin.
+      val metrics = Option(pushTelemetryRequest.data().metrics())
+      if (!metrics.get.isEmpty) {
+        System.out.println("[APM] - export")
+        ClientMetricsReceiverPlugin.exportMetrics(requestContext, pushTelemetryRequest)
+      }
+    } catch {
+      case e: ClientMetricsException => {
+        warn("PushTelemetry request raised an exception: " + e.getMessage)
+        System.out.println("[APM] Error: " + e.getMessage)
+        errorCode = e.getErrorCode
+      }
+    }
+
+    // Finally, send the response back to the client
+    createResponse(Option(errorCode))
+  }
+
+  def updateSubscription(groupId :String, properties :Properties) = {
+    ClientMetricsConfig1.updateClientSubscription(groupId, properties)
+  }
+
+  def createClientInstance(clientInstanceId: Uuid, clientInfo: ClientMetricsMetadata): ClientMetricsInstanceState = {
+    val clientInstance = ClientMetricsInstanceState(clientInstanceId, clientInfo,
+                                               ClientMetricsConfig1.getClientSubscriptions)
+    // Add to the cache and if cache size > max entries then time to make some room by running
+    // GC to clean up all the expired entries in the cache.
+    ClientMetricsCache.getInstance.add(clientInstance)
+    ClientMetricsCache.deleteExpiredEntries()
+    clientInstance
+  }
 }
 

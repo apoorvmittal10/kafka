@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import kafka.metrics.ClientMetricsConfig
+import kafka.metrics.ClientMetricsConfig1
 
 import java.net.{InetAddress, UnknownHostException}
 import java.util.Properties
@@ -115,7 +115,7 @@ object DynamicConfig {
   }
 
   object ClientMetrics {
-    private val clientConfigs = ClientMetricsConfig.ClientMetrics.configDef
+    private val clientConfigs = ClientMetricsConfig1.ClientMetrics.configDef
 
     def configKeys: util.Map[String, ConfigDef.ConfigKey] = clientConfigs.configKeys
 

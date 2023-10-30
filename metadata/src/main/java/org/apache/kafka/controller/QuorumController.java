@@ -2069,9 +2069,11 @@ public final class QuorumController implements Controller {
         if (configChanges.isEmpty()) {
             return CompletableFuture.completedFuture(Collections.emptyMap());
         }
+        // [APM] newlycreated resource is always false
         return appendWriteEvent("incrementalAlterConfigs", context.deadlineNs(), () -> {
             ControllerResult<Map<ConfigResource, ApiError>> result =
                 configurationControl.incrementalAlterConfigs(configChanges, false);
+            System.out.println("[APM] config alter result: " + result + " validate only: " + validateOnly);
             if (validateOnly) {
                 return result.withoutRecords();
             } else {

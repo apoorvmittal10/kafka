@@ -16,7 +16,7 @@
  */
 package kafka.metrics
 
-import kafka.metrics.ClientMetricsConfig.ClientMatchingParams._
+import ClientMetricsConfig.ClientMatchingParams._
 import kafka.network.RequestChannel
 import org.apache.kafka.common.errors.InvalidConfigurationException
 

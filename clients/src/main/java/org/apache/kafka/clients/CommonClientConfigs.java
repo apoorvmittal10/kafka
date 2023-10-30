@@ -292,6 +292,12 @@ public class CommonClientConfigs {
             jmxReporter.configure(config.originals(clientIdOverride));
             reporters.add(jmxReporter);
         }
+        if (config.getBoolean(CommonClientConfigs.ENABLE_METRICS_PUSH_CONFIG) &&
+            reporters.stream().noneMatch(r -> ClientTelemetryReporter.class.equals(r.getClass()))) {
+            ClientTelemetryReporter telemetryReporter = new ClientTelemetryReporter();
+            telemetryReporter.configure(config.originals(clientIdOverride));
+            reporters.add(telemetryReporter);
+        }
         return reporters;
     }
 }

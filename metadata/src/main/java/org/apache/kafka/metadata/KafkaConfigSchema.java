@@ -202,6 +202,7 @@ public class KafkaConfigSchema {
                     ConfigSource.STATIC_BROKER_CONFIG, synonym.converter());
             }
         }
+        // TODO (Apoorv): Add support for dynamic client config
         return toConfigEntry(configKey, configKey.hasDefault() ? configKey.defaultValue : null,
             ConfigSource.DEFAULT_CONFIG, Function.identity());
     }

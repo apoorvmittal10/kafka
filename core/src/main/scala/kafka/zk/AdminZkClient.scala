@@ -531,6 +531,19 @@ class AdminZkClient(zkClient: KafkaZkClient,
     DynamicConfig.Broker.validate(configs)
   }
 
+  /**
+   * Update the client metrics subscription and create a change notification so the change
+   * will propagate to other brokers
+   * @param clientMetricsSubscriptionName: Name of the client metric subscription
+   * @param configs: Properties associated with the client metric subscription.
+   */
+//  def changeClientMetricsConfig(clientMetricsSubscriptionName: String, configs: Properties): Unit = {
+//    System.out.println("[APM] - changeClientMetricsConfig")
+//    throw new UnsupportedOperationException("changeClientMetricsConfig is not supported")
+////    ClientMetricsConfig.validateConfig(clientMetricsSubscriptionName, configs)
+////    changeEntityConfig(ConfigType.ClientMetrics, clientMetricsSubscriptionName, configs)
+//  }
+
   private def changeEntityConfig(rootEntityType: String, fullSanitizedEntityName: String, configs: Properties, isUserClientId: Boolean = false): Unit = {
     val sanitizedEntityPath = rootEntityType + '/' + fullSanitizedEntityName
     var needUpdateConfigs = true

@@ -17,7 +17,7 @@
 
 package kafka.server
 
-import kafka.metrics.ClientMetricsConfig
+import kafka.metrics.ClientMetricsConfig1
 
 import java.util
 import java.util.Properties
@@ -113,7 +113,7 @@ class ControllerConfigurationValidator(kafkaConfig: KafkaConfig) extends Configu
       case CLIENT_METRICS =>
         val properties = new Properties()
         config.entrySet().forEach(e => properties.setProperty(e.getKey, e.getValue))
-        ClientMetricsConfig.validateConfig(resource.name(), properties)
+        ClientMetricsConfig1.validateConfig(resource.name(), properties)
       case _ => throwExceptionForUnknownResourceType(resource)
     }
   }
