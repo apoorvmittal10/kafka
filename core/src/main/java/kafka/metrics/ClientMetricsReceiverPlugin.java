@@ -49,6 +49,11 @@ public class ClientMetricsReceiverPlugin {
         receivers.add(receiver);
     }
 
+    // Visible for testing, should only be used in tests.
+    public void clear() {
+        receivers.clear();
+    }
+
     public DefaultClientTelemetryPayload getPayLoad(PushTelemetryRequest request) {
         return new DefaultClientTelemetryPayload(request);
     }
