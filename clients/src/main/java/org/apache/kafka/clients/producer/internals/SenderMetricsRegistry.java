@@ -39,6 +39,8 @@ public class SenderMetricsRegistry {
     public final MetricName compressionRateAvg;
     public final MetricName recordQueueTimeAvg;
     public final MetricName recordQueueTimeMax;
+    public final MetricName requestLatency;
+    public final MetricName requestLatencyHdr;
     public final MetricName requestLatencyAvg;
     public final MetricName requestLatencyMax;   
     public final MetricName produceThrottleTimeAvg;
@@ -89,6 +91,10 @@ public class SenderMetricsRegistry {
                 "The average time in ms record batches spent in the send buffer.");
         this.recordQueueTimeMax = createMetricName("record-queue-time-max",
                 "The maximum time in ms record batches spent in the send buffer.");
+        this.requestLatency = createMetricName("request-latency",
+                "The distribution of request latency in different time buckets.");
+        this.requestLatencyHdr = createMetricName("request-latency-hdr",
+            "The distribution of request latency in different time buckets in HDR.");
         this.requestLatencyAvg = createMetricName("request-latency-avg", 
                 "The average request latency in ms");
         this.requestLatencyMax = createMetricName("request-latency-max", 

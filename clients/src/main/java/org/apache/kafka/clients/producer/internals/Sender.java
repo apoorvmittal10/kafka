@@ -20,6 +20,18 @@ import static org.apache.kafka.common.requests.ProduceResponse.INVALID_OFFSET;
 
 import java.util.Optional;
 import java.util.Set;
+import io.micrometer.core.instrument.DistributionSummary;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.opentelemetry.api.metrics.LongHistogram;
+import io.opentelemetry.api.metrics.MeterProvider;
+import io.opentelemetry.proto.metrics.v1.ExponentialHistogram;
+import io.opentelemetry.proto.metrics.v1.HistogramOrBuilder;
+import io.opentelemetry.proto.metrics.v1.Summary;
+import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import org.HdrHistogram.DoubleHistogram;
+import org.HdrHistogram.Histogram;
 import org.apache.kafka.clients.ApiVersions;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.ClientResponse;
@@ -44,8 +56,11 @@ import org.apache.kafka.common.errors.TransactionAbortedException;
 import org.apache.kafka.common.errors.TransactionalIdAuthorizationException;
 import org.apache.kafka.common.errors.UnknownTopicOrPartitionException;
 import org.apache.kafka.common.message.ProduceRequestData;
+import org.apache.kafka.common.metrics.MeasurableStat;
 import org.apache.kafka.common.metrics.Sensor;
 import org.apache.kafka.common.metrics.stats.Avg;
+import org.apache.kafka.common.metrics.stats.HdrHistogramWrapper;
+import org.apache.kafka.common.metrics.stats.LinearHistogram;
 import org.apache.kafka.common.metrics.stats.Max;
 import org.apache.kafka.common.metrics.stats.Meter;
 import org.apache.kafka.common.protocol.Errors;
@@ -128,6 +143,38 @@ public class Sender implements Runnable {
     private final Map<TopicPartition, List<ProducerBatch>> inFlightBatches;
 
     public Sender(LogContext logContext,
+        KafkaClient client,
+        ProducerMetadata metadata,
+        RecordAccumulator accumulator,
+        boolean guaranteeMessageOrder,
+        int maxRequestSize,
+        short acks,
+        int retries,
+        SenderMetricsRegistry metricsRegistry,
+        Time time,
+        int requestTimeoutMs,
+        long retryBackoffMs,
+        TransactionManager transactionManager,
+        ApiVersions apiVersions) {
+        this.log = logContext.logger(Sender.class);
+        this.client = client;
+        this.accumulator = accumulator;
+        this.metadata = metadata;
+        this.guaranteeMessageOrder = guaranteeMessageOrder;
+        this.maxRequestSize = maxRequestSize;
+        this.running = true;
+        this.acks = acks;
+        this.retries = retries;
+        this.time = time;
+        this.sensors = new SenderMetrics(metricsRegistry, metadata, client, time, requestTimeoutMs, null, null);
+        this.requestTimeoutMs = requestTimeoutMs;
+        this.retryBackoffMs = retryBackoffMs;
+        this.apiVersions = apiVersions;
+        this.transactionManager = transactionManager;
+        this.inFlightBatches = new HashMap<>();
+    }
+
+    public Sender(LogContext logContext,
                   KafkaClient client,
                   ProducerMetadata metadata,
                   RecordAccumulator accumulator,
@@ -140,7 +187,9 @@ public class Sender implements Runnable {
                   int requestTimeoutMs,
                   long retryBackoffMs,
                   TransactionManager transactionManager,
-                  ApiVersions apiVersions) {
+                  ApiVersions apiVersions,
+                  MeterRegistry meterRegistry,
+                  MeterProvider meterProvider) {
         this.log = logContext.logger(Sender.class);
         this.client = client;
         this.accumulator = accumulator;
@@ -151,7 +200,7 @@ public class Sender implements Runnable {
         this.acks = acks;
         this.retries = retries;
         this.time = time;
-        this.sensors = new SenderMetrics(metricsRegistry, metadata, client, time);
+        this.sensors = new SenderMetrics(metricsRegistry, metadata, client, time, requestTimeoutMs, meterRegistry, meterProvider);
         this.requestTimeoutMs = requestTimeoutMs;
         this.retryBackoffMs = retryBackoffMs;
         this.apiVersions = apiVersions;
@@ -945,6 +994,10 @@ public class Sender implements Runnable {
         public final Sensor errorSensor;
         public final Sensor queueTimeSensor;
         public final Sensor requestTimeSensor;
+        public final DistributionSummary histogram;
+        public final LongHistogram longHistogram;
+        public final Histogram hdrHistogram;
+        public final Timer histogramTimer;
         public final Sensor recordsPerRequestSensor;
         public final Sensor batchSizeSensor;
         public final Sensor compressionRateSensor;
@@ -953,7 +1006,8 @@ public class Sender implements Runnable {
         private final SenderMetricsRegistry metrics;
         private final Time time;
 
-        public SenderMetrics(SenderMetricsRegistry metrics, Metadata metadata, KafkaClient client, Time time) {
+        public SenderMetrics(SenderMetricsRegistry metrics, Metadata metadata, KafkaClient client,
+            Time time, int requestTimeoutMs, MeterRegistry jmxMeterRegistry, MeterProvider meterProvider) {
             this.metrics = metrics;
             this.time = time;
 
@@ -969,6 +1023,24 @@ public class Sender implements Runnable {
             this.queueTimeSensor.add(metrics.recordQueueTimeMax, new Max());
 
             this.requestTimeSensor = metrics.sensor("request-time");
+            this.requestTimeSensor.add(new LinearHistogram(16, 10, metrics.requestLatency));
+
+            this.histogram = DistributionSummary.builder("micrometer.request-latency").register(jmxMeterRegistry);
+            this.histogramTimer = Timer.builder("micrometer.request-latency-timer")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .minimumExpectedValue(Duration.ofMillis(1))
+                .maximumExpectedValue(Duration.ofSeconds(10))
+                .register(jmxMeterRegistry);
+            this.longHistogram = meterProvider.meterBuilder("io.opentelemetry.example.prometheus").build()
+                .histogramBuilder("otlp_custom_histogram").ofLongs().setUnit("ms").build();
+            // HdrHistogram on OTLP
+//            meterProvider.meterBuilder("otlp-request-latency-hdr").build().histogramBuilder()
+
+//            meterProvider.meterBuilder("test").build().
+            this.hdrHistogram = new Histogram(30000, 3);
+            // HdrHistogram
+            this.requestTimeSensor.add(new HdrHistogramWrapper(metrics.requestLatencyHdr));
             this.requestTimeSensor.add(metrics.requestLatencyAvg, new Avg());
             this.requestTimeSensor.add(metrics.requestLatencyMax, new Max());
 
@@ -1088,6 +1160,10 @@ public class Sender implements Runnable {
         public void recordLatency(String node, long latency) {
             long now = time.milliseconds();
             this.requestTimeSensor.record(latency, now);
+            this.histogram.record(latency);
+            this.histogramTimer.record(latency, TimeUnit.MILLISECONDS);
+            this.longHistogram.record(latency);
+            this.hdrHistogram.recordValue(latency);
             if (!node.isEmpty()) {
                 String nodeTimeName = "node-" + node + ".latency";
                 Sensor nodeRequestTime = this.metrics.getSensor(nodeTimeName);
