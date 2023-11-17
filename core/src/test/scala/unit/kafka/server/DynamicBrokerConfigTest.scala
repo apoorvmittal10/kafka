@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kafka.controller.KafkaController
 import kafka.log.LogManager
 import kafka.log.remote.RemoteLogManager
+import kafka.metrics.TestClientMetricsReporter
 import kafka.network.{DataPlaneAcceptor, SocketServer}
 import kafka.utils.TestUtils
 import kafka.zk.KafkaZkClient
@@ -656,6 +657,31 @@ class DynamicBrokerConfigTest {
   def testUpdateMetricReporters(): Unit = {
     val brokerId = 0
     val origProps = TestUtils.createBrokerConfig(brokerId, TestUtils.MockZkConnect, port = 8181)
+
+    val config = KafkaConfig(origProps)
+    val serverMock = Mockito.mock(classOf[KafkaBroker])
+    val metrics = Mockito.mock(classOf[Metrics])
+
+    Mockito.when(serverMock.config).thenReturn(config)
+
+    config.dynamicConfig.initialize(None)
+    val m = new DynamicMetricsReporters(brokerId, config, metrics, "clusterId")
+    config.dynamicConfig.addReconfigurable(m)
+    assertEquals(1, m.currentReporters.size)
+    assertEquals(classOf[JmxReporter].getName, m.currentReporters.keySet.head)
+
+    val props = new Properties()
+    props.put(KafkaConfig.MetricReporterClassesProp, classOf[MockMetricsReporter].getName)
+    config.dynamicConfig.updateDefaultConfig(props)
+    assertEquals(2, m.currentReporters.size)
+    assertEquals(Set(classOf[JmxReporter].getName, classOf[MockMetricsReporter].getName), m.currentReporters.keySet)
+  }
+
+  @Test
+  def testUpdateMetricReportersWithClientTelemetryPlugin(): Unit = {
+    val brokerId = 0
+    val origProps = TestUtils.createBrokerConfig(brokerId, TestUtils.MockZkConnect, port = 8181)
+    origProps.put(KafkaConfig.MetricReporterClassesProp, classOf[TestClientMetricsReporter].getName)
 
     val config = KafkaConfig(origProps)
     val serverMock = Mockito.mock(classOf[KafkaBroker])

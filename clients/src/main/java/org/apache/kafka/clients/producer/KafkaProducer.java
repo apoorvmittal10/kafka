@@ -16,7 +16,30 @@
  */
 package org.apache.kafka.clients.producer;
 
+import com.google.common.annotations.VisibleForTesting;
+import io.micrometer.core.instrument.Clock;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.jmx.JmxMeterRegistry;
+import io.opentelemetry.api.metrics.MeterProvider;
+import io.opentelemetry.exporter.prometheus.PrometheusHttpServer;
+import io.opentelemetry.sdk.metrics.SdkMeterProvider;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Properties;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.apache.kafka.clients.ApiVersions;
+import org.apache.kafka.clients.ClientTelemetryReporter;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.KafkaClient;
@@ -72,19 +95,6 @@ import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;
 import org.apache.kafka.common.utils.Utils;
 import org.slf4j.Logger;
-
-import java.net.InetSocketAddress;
-import java.time.Duration;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Properties;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 
 /**
@@ -257,6 +267,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private final ProducerInterceptors<K, V> interceptors;
     private final ApiVersions apiVersions;
     private final TransactionManager transactionManager;
+    private final ClientTelemetryReporter clientTelemetryReporter;
 
     /**
      * A producer is instantiated by providing a set of key-value pairs as configuration. Valid configuration strings
@@ -364,6 +375,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     .recordLevel(Sensor.RecordingLevel.forName(config.getString(ProducerConfig.METRICS_RECORDING_LEVEL_CONFIG)))
                     .tags(metricTags);
             List<MetricsReporter> reporters = CommonClientConfigs.metricsReporters(clientId, config);
+            Optional<ClientTelemetryReporter> telemetryReporter = CommonClientConfigs.telemetryReporter(clientId, config);
+            if (telemetryReporter.isPresent()) {
+                this.clientTelemetryReporter = telemetryReporter.get();
+                reporters.add(clientTelemetryReporter);
+            } else {
+                this.clientTelemetryReporter = null;
+            }
             MetricsContext metricsContext = new KafkaMetricsContext(JMX_PREFIX,
                     config.originalsWithPrefix(CommonClientConfigs.METRICS_CONTEXT_PREFIX));
             this.metrics = new Metrics(metricConfig, reporters, time, metricsContext);
@@ -460,6 +478,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             AppInfoParser.registerAppInfo(JMX_PREFIX, clientId, metrics, time.milliseconds());
             log.debug("Kafka producer started");
         } catch (Throwable t) {
+            System.out.println("Error: " + t);
             // call close methods if internal objects are already constructed this is to prevent resource leak. see KAFKA-2121
             close(Duration.ofMillis(0), true);
             // now propagate the exception
@@ -480,7 +499,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                   ProducerInterceptors<K, V> interceptors,
                   Partitioner partitioner,
                   Time time,
-                  KafkaThread ioThread) {
+                  KafkaThread ioThread,
+                  ClientTelemetryReporter clientTelemetryReporter) {
         this.producerConfig = config;
         this.time = time;
         this.clientId = config.getString(ProducerConfig.CLIENT_ID_CONFIG);
@@ -503,6 +523,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         this.metadata = metadata;
         this.sender = sender;
         this.ioThread = ioThread;
+        this.clientTelemetryReporter = clientTelemetryReporter;
     }
 
     // visible for testing
@@ -519,7 +540,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 time,
                 maxInflightRequests,
                 metadata,
-                throttleTimeSensor);
+                throttleTimeSensor,
+                clientTelemetryReporter != null ? clientTelemetryReporter.telemetrySender() : null);
 
         short acks = Short.parseShort(producerConfig.getString(ProducerConfig.ACKS_CONFIG));
         return new Sender(logContext,
@@ -1245,6 +1267,11 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         }
     }
 
+    /** For testing **/
+    public ClientTelemetryReporter clientTelemetryReporter() {
+        return clientTelemetryReporter;
+    }
+
     /**
      * Get the full set of internal metrics maintained by the producer.
      */
@@ -1331,6 +1358,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             throw new IllegalArgumentException("The timeout cannot be negative.");
         log.info("Closing the Kafka producer with timeoutMillis = {} ms.", timeoutMs);
 
+        // This starts the client telemetry termination process which will attempt to send a
+        // terminal telemetry push, if possible.
+        //
+        // This is a separate step from actually closing the instance, which we do further down.
+        if (clientTelemetryReporter != null) {
+            clientTelemetryReporter.close();
+        }
+
         // this will keep track of the first encountered exception
         AtomicReference<Throwable> firstException = new AtomicReference<>();
         boolean invokedFromCallback = Thread.currentThread() == this.ioThread;
@@ -1370,6 +1405,7 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
 
         Utils.closeQuietly(interceptors, "producer interceptors", firstException);
         Utils.closeQuietly(producerMetrics, "producer metrics wrapper", firstException);
+//        ClientTelemetryUtils.closeQuietly(clientTelemetryReporter, "client telemetry", firstException);
         Utils.closeQuietly(metrics, "producer metrics", firstException);
         Utils.closeQuietly(keySerializer, "producer keySerializer", firstException);
         Utils.closeQuietly(valueSerializer, "producer valueSerializer", firstException);
@@ -1542,6 +1578,21 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     topicPartition = new TopicPartition(topic, RecordMetadata.UNKNOWN_PARTITION);
             }
             return topicPartition;
+        }
+    }
+
+    /** For testing **/
+    @VisibleForTesting
+    public Optional<ClientTelemetryReporter> clientTelemetry() {
+        return Optional.of(clientTelemetryReporter);
+    }
+
+    private Integer findRandomOpenPort() throws IOException {
+        try (
+            ServerSocket socket = new ServerSocket(0);
+        ) {
+            return socket.getLocalPort();
+
         }
     }
 }

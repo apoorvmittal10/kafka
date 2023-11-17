@@ -47,6 +47,7 @@ import org.apache.kafka.clients.consumer.internals.events.NewTopicsMetadataUpdat
 import org.apache.kafka.clients.consumer.internals.events.OffsetFetchApplicationEvent;
 import org.apache.kafka.clients.consumer.internals.events.ResetPositionsApplicationEvent;
 import org.apache.kafka.clients.consumer.internals.events.ValidatePositionsApplicationEvent;
+import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.IsolationLevel;
 import org.apache.kafka.common.KafkaException;
@@ -61,6 +62,7 @@ import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.requests.ListOffsetsRequest;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.common.utils.LogContext;
@@ -172,13 +174,15 @@ public class AsyncKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             log.debug("Initializing the Kafka consumer");
             this.defaultApiTimeoutMs = config.getInt(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG);
             this.time = Time.SYSTEM;
-            this.metrics = createMetrics(config, time);
             this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
 
             List<ConsumerInterceptor<K, V>> interceptorList = configuredConsumerInterceptors(config);
             this.interceptors = new ConsumerInterceptors<>(interceptorList);
             this.deserializers = new Deserializers<>(config, keyDeserializer, valueDeserializer);
             this.subscriptions = createSubscriptionState(config, logContext);
+            List<MetricsReporter> reporters = CommonClientConfigs.metricsReporters(config.getString(
+                ConsumerConfig.CLIENT_ID_CONFIG), config);
+            this.metrics = createMetrics(config, time, reporters);
             ClusterResourceListeners clusterResourceListeners = ClientUtils.configureClusterResourceListeners(metrics.reporters(),
                     interceptorList,
                     Arrays.asList(deserializers.keyDeserializer, deserializers.valueDeserializer));
@@ -202,7 +206,8 @@ public class AsyncKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     config,
                     apiVersions,
                     metrics,
-                    fetchMetricsManager);
+                    fetchMetricsManager,
+                    null);
             final Supplier<RequestManagers> requestManagersSupplier = RequestManagers.supplier(time,
                     logContext,
                     backgroundEventQueue,

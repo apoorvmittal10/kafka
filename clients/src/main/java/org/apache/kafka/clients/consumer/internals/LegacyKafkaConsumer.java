@@ -17,6 +17,7 @@
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.ApiVersions;
+import org.apache.kafka.clients.ClientTelemetryReporter;
 import org.apache.kafka.clients.ClientUtils;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.GroupRebalanceConfig;
@@ -48,6 +49,7 @@ import org.apache.kafka.common.errors.InvalidGroupIdException;
 import org.apache.kafka.common.errors.TimeoutException;
 import org.apache.kafka.common.internals.ClusterResourceListeners;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.utils.AppInfoParser;
 import org.apache.kafka.common.utils.LogContext;
@@ -130,6 +132,7 @@ public class LegacyKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
     private final int defaultApiTimeoutMs;
     private volatile boolean closed = false;
     private final List<ConsumerPartitionAssignor> assignors;
+    private final ClientTelemetryReporter clientTelemetryReporter;
 
     // currentThread holds the threadId of the current thread accessing LegacyKafkaConsumer
     // and is used to prevent multi-threaded access
@@ -160,7 +163,9 @@ public class LegacyKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
             this.defaultApiTimeoutMs = config.getInt(ConsumerConfig.DEFAULT_API_TIMEOUT_MS_CONFIG);
             this.time = Time.SYSTEM;
-            this.metrics = createMetrics(config, time);
+
+            List<MetricsReporter> reporters = CommonClientConfigs.metricsReporters(clientId, config);
+            this.metrics = createMetrics(config, time, reporters);
             this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
             this.retryBackoffMaxMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MAX_MS_CONFIG);
 
@@ -180,6 +185,9 @@ public class LegacyKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
             FetchConfig fetchConfig = new FetchConfig(config);
             this.isolationLevel = fetchConfig.isolationLevel;
 
+            Optional<MetricsReporter> reporter = reporters.stream().filter(r -> r instanceof ClientTelemetryReporter).findFirst();
+            this.clientTelemetryReporter = (ClientTelemetryReporter) reporter.orElse(null);
+
             ApiVersions apiVersions = new ApiVersions();
             this.client = createConsumerNetworkClient(config,
                     metrics,
@@ -188,7 +196,8 @@ public class LegacyKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
                     time,
                     metadata,
                     fetchMetricsManager.throttleTimeSensor(),
-                    retryBackoffMs);
+                    retryBackoffMs,
+                    clientTelemetryReporter != null ? clientTelemetryReporter.telemetrySender() : null);
 
             this.assignors = ConsumerPartitionAssignor.getAssignorInstances(
                     config.getList(ConsumerConfig.PARTITION_ASSIGNMENT_STRATEGY_CONFIG),
@@ -282,6 +291,7 @@ public class LegacyKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
         this.retryBackoffMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MS_CONFIG);
         this.retryBackoffMaxMs = config.getLong(ConsumerConfig.RETRY_BACKOFF_MAX_MS_CONFIG);
         this.requestTimeoutMs = config.getInt(ConsumerConfig.REQUEST_TIMEOUT_MS_CONFIG);
+        this.clientTelemetryReporter = null;
 
         int sessionTimeoutMs = config.getInt(ConsumerConfig.SESSION_TIMEOUT_MS_CONFIG);
         int rebalanceTimeoutMs = config.getInt(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG);

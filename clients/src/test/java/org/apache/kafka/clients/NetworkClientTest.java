@@ -995,7 +995,7 @@ public class NetworkClientTest {
         NetworkClient client = new NetworkClient(metadataUpdater, null, selector, "mock", Integer.MAX_VALUE,
                 reconnectBackoffMsTest, reconnectBackoffMaxMsTest, 64 * 1024, 64 * 1024,
                 defaultRequestTimeoutMs, connectionSetupTimeoutMsTest, connectionSetupTimeoutMaxMsTest,
-                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver);
+                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver, null);
 
         // Connect to one the initial addresses, then change the addresses and disconnect
         client.ready(node, time.milliseconds());
@@ -1039,7 +1039,7 @@ public class NetworkClientTest {
         NetworkClient client = new NetworkClient(metadataUpdater, null, selector, "mock", Integer.MAX_VALUE,
                 reconnectBackoffMsTest, reconnectBackoffMaxMsTest, 64 * 1024, 64 * 1024,
                 defaultRequestTimeoutMs, connectionSetupTimeoutMsTest, connectionSetupTimeoutMaxMsTest,
-                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver);
+                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver, null);
 
         // First connection attempt should fail
         client.ready(node, time.milliseconds());
@@ -1080,7 +1080,7 @@ public class NetworkClientTest {
         NetworkClient client = new NetworkClient(metadataUpdater, null, selector, "mock", Integer.MAX_VALUE,
                 reconnectBackoffMsTest, reconnectBackoffMaxMsTest, 64 * 1024, 64 * 1024,
                 defaultRequestTimeoutMs, connectionSetupTimeoutMsTest, connectionSetupTimeoutMaxMsTest,
-                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver);
+                time, false, new ApiVersions(), null, new LogContext(), mockHostResolver, null);
 
         // Connect to one the initial addresses, then change the addresses and disconnect
         client.ready(node, time.milliseconds());

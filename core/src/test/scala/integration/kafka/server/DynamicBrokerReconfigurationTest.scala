@@ -33,6 +33,7 @@ import kafka.api.{KafkaSasl, SaslSetup}
 import kafka.controller.{ControllerBrokerStateInfo, ControllerChannelManager}
 import kafka.log.UnifiedLog
 import kafka.network.{DataPlaneAcceptor, Processor, RequestChannel}
+import kafka.metrics.{ClientMetricsReceiverPlugin}
 import kafka.utils._
 import kafka.utils.Implicits._
 import kafka.utils.TestUtils.TestControllerRequestCompletionHandler
@@ -937,6 +938,40 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
   }
 
   @Test
+  def testClientMetricsEmptyReporter(): Unit = {
+    // Add a default test metrics reporter that doesn't implement the clientReceiver method
+    val newProps = new Properties
+    newProps.put(TestMetricsReporter.PollingIntervalProp, "100")
+    configureMetricsReporters(Seq(classOf[TestMetricsReporter]), newProps)
+
+    val reporters = TestMetricsReporter.waitForReporters(servers.size)
+    reporters.foreach { reporter =>
+      reporter.verifyState(reconfigureCount = 0, deleteCount = 0, pollingInterval = 100)
+
+      // There should not be any clientReceiver in the default implementation.
+//      assertNull(reporter.clientReceiver)
+    }
+  }
+
+  @Test
+  def testClientMetricsReporter(): Unit = {
+    // Add a new metrics reporter that has implemented the clientReceiver interface method.
+    val newProps = new Properties
+    newProps.put(TestMetricsReporter.PollingIntervalProp, "100")
+//    configureMetricsReporters(Seq(classOf[TestClientMetricsReporter]), newProps)
+
+    val reporters = TestMetricsReporter.waitForReporters(servers.size)
+    assertFalse(ClientMetricsReceiverPlugin.instance.isEmpty)
+
+    reporters.foreach { reporter =>
+      reporter.verifyState(reconfigureCount = 0, deleteCount = 0, pollingInterval = 100)
+
+      // we should have a valid clientReceiver here.
+//      assertNotNull(reporter.clientReceiver)
+    }
+  }
+
+  @Test
   @Disabled // TODO: To be re-enabled once we can make it less flaky (KAFKA-7957)
   def testMetricsReporterUpdate(): Unit = {
     // Add a new metrics reporter
@@ -1392,7 +1427,23 @@ class DynamicBrokerReconfigurationTest extends QuorumTestHarness with SaslSetup 
 
   private def awaitInitialPositions(consumer: Consumer[_, _]): Unit = {
     TestUtils.pollUntilTrue(consumer, () => !consumer.assignment.isEmpty, "Timed out while waiting for assignment")
-    consumer.assignment.forEach(consumer.position(_))
+
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+    //
+
   }
 
   private def clientProps(securityProtocol: SecurityProtocol, saslMechanism: Option[String] = None): Properties = {

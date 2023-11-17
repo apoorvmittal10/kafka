@@ -16,28 +16,12 @@
  */
 package org.apache.kafka.test;
 
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.Cluster;
-import org.apache.kafka.common.Node;
-import org.apache.kafka.common.PartitionInfo;
-import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.feature.Features;
-import org.apache.kafka.common.feature.SupportedVersionRange;
-import org.apache.kafka.common.message.ApiMessageType;
-import org.apache.kafka.common.message.ApiVersionsResponseData;
-import org.apache.kafka.common.network.NetworkReceive;
-import org.apache.kafka.common.network.Send;
-import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.record.RecordVersion;
-import org.apache.kafka.common.record.UnalignedRecords;
-import org.apache.kafka.common.requests.ApiVersionsResponse;
-import org.apache.kafka.common.requests.ByteBufferChannel;
-import org.apache.kafka.common.requests.RequestHeader;
-import org.apache.kafka.common.utils.Exit;
-import org.apache.kafka.common.utils.Utils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import static java.util.Arrays.asList;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.File;
 import java.io.IOException;
@@ -67,13 +51,27 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-
-import static java.util.Arrays.asList;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.producer.ProducerConfig;
+import org.apache.kafka.common.Cluster;
+import org.apache.kafka.common.Node;
+import org.apache.kafka.common.PartitionInfo;
+import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.feature.Features;
+import org.apache.kafka.common.feature.SupportedVersionRange;
+import org.apache.kafka.common.message.ApiMessageType;
+import org.apache.kafka.common.message.ApiVersionsResponseData;
+import org.apache.kafka.common.network.NetworkReceive;
+import org.apache.kafka.common.network.Send;
+import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.record.RecordVersion;
+import org.apache.kafka.common.record.UnalignedRecords;
+import org.apache.kafka.common.requests.ApiVersionsResponse;
+import org.apache.kafka.common.requests.ByteBufferChannel;
+import org.apache.kafka.common.requests.RequestHeader;
+import org.apache.kafka.common.utils.Utils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Helper functions for writing unit tests
@@ -210,15 +208,15 @@ public class TestUtils {
         } catch (final IOException ex) {
             throw new RuntimeException("Failed to create a temp dir", ex);
         }
-        file.deleteOnExit();
-
-        Exit.addShutdownHook("delete-temp-file-shutdown-hook", () -> {
-            try {
-                Utils.delete(file);
-            } catch (IOException e) {
-                log.error("Error deleting {}", file.getAbsolutePath(), e);
-            }
-        });
+//        file.deleteOnExit();
+//
+//        Exit.addShutdownHook("delete-temp-file-shutdown-hook", () -> {
+//            try {
+//                Utils.delete(file);
+//            } catch (IOException e) {
+//                log.error("Error deleting {}", file.getAbsolutePath(), e);
+//            }
+//        });
 
         return file;
     }

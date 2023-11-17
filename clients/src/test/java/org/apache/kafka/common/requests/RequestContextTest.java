@@ -50,7 +50,7 @@ public class RequestContextTest {
         int correlationId = 23423;
 
         RequestHeader header = new RequestHeader(ApiKeys.API_VERSIONS, Short.MAX_VALUE, "", correlationId);
-        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(), KafkaPrincipal.ANONYMOUS,
+        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(),1234, KafkaPrincipal.ANONYMOUS,
                 new ListenerName("ssl"), SecurityProtocol.SASL_SSL, ClientInformation.EMPTY, false);
         assertEquals(0, context.apiVersion());
 
@@ -103,7 +103,7 @@ public class RequestContextTest {
         RequestHeader header = new RequestHeader(ApiKeys.CREATE_TOPICS, ApiKeys.CREATE_TOPICS.latestVersion(),
             clientId, correlationId);
 
-        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(),
+        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(), 1234,
             KafkaPrincipal.ANONYMOUS, new ListenerName("ssl"), SecurityProtocol.SASL_SSL,
             ClientInformation.EMPTY, true);
 
@@ -121,7 +121,7 @@ public class RequestContextTest {
         corruptBuffer.putInt(8, (Integer.MAX_VALUE - 1) / 2);
 
         RequestHeader header = new RequestHeader(ApiKeys.PRODUCE, version, "console-producer", 3);
-        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(),
+        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(), 1234,
                 KafkaPrincipal.ANONYMOUS, new ListenerName("ssl"), SecurityProtocol.SASL_SSL,
                 ClientInformation.EMPTY, true);
 
@@ -138,7 +138,7 @@ public class RequestContextTest {
         corruptBuffer.putInt(17, Integer.MAX_VALUE);
 
         RequestHeader header = new RequestHeader(ApiKeys.PRODUCE, version, "console-producer", 3);
-        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(),
+        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(), 1234,
                 KafkaPrincipal.ANONYMOUS, new ListenerName("ssl"), SecurityProtocol.SASL_SSL,
                 ClientInformation.EMPTY, true);
 
@@ -178,7 +178,7 @@ public class RequestContextTest {
         corruptBuffer.putInt(0, Integer.MAX_VALUE);
 
         RequestHeader header = new RequestHeader(ApiKeys.SASL_AUTHENTICATE, version, "console-producer", 1);
-        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(),
+        RequestContext context = new RequestContext(header, "0", InetAddress.getLocalHost(), 1234,
                 KafkaPrincipal.ANONYMOUS, new ListenerName("ssl"), SecurityProtocol.SASL_SSL,
                 ClientInformation.EMPTY, true);
 

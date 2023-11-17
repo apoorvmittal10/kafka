@@ -16,6 +16,14 @@
  */
 package org.apache.kafka.clients.consumer;
 
+import org.apache.kafka.clients.ApiVersions;
+import org.apache.kafka.clients.ClientTelemetryReporter;
+import org.apache.kafka.clients.ClientUtils;
+import org.apache.kafka.clients.CommonClientConfigs;
+import org.apache.kafka.clients.GroupRebalanceConfig;
+import org.apache.kafka.clients.Metadata;
+import org.apache.kafka.clients.consumer.internals.ConsumerCoordinator;
+import org.apache.kafka.clients.consumer.internals.ConsumerInterceptors;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.consumer.internals.ConsumerDelegate;
 import org.apache.kafka.clients.consumer.internals.ConsumerDelegateCreator;
@@ -30,6 +38,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.Uuid;
 import org.apache.kafka.common.errors.InterruptException;
 import org.apache.kafka.common.metrics.Metrics;
+import org.apache.kafka.common.metrics.MetricsReporter;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.utils.LogContext;
 import org.apache.kafka.common.utils.Time;

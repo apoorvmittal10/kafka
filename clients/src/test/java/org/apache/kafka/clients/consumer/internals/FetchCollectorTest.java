@@ -433,7 +433,7 @@ public class FetchCollectorTest {
         subscriptions = createSubscriptionState(config, logContext);
         fetchConfig = new FetchConfig(config);
 
-        Metrics metrics = createMetrics(config, time);
+        Metrics metrics = createMetrics(config, time, null);
         metricsManager = createFetchMetricsManager(metrics);
         metadata = new ConsumerMetadata(
                 0,

@@ -39,6 +39,7 @@ public class TestUtil {
             ),
             "1",
             InetAddress.getLoopbackAddress(),
+            1234,
             KafkaPrincipal.ANONYMOUS,
             ListenerName.forSecurityProtocol(SecurityProtocol.PLAINTEXT),
             SecurityProtocol.PLAINTEXT,

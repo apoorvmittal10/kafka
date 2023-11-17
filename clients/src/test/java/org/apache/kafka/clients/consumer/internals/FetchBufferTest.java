@@ -78,7 +78,7 @@ public class FetchBufferTest {
 
         subscriptions = createSubscriptionState(config, logContext);
 
-        Metrics metrics = createMetrics(config, time);
+        Metrics metrics = createMetrics(config, time, null);
         metricsManager = createFetchMetricsManager(metrics);
     }
 

@@ -37,6 +37,7 @@ public class RequestContext implements AuthorizableRequestContext {
     public final RequestHeader header;
     public final String connectionId;
     public final InetAddress clientAddress;
+    public final int clientPort;
     public final KafkaPrincipal principal;
     public final ListenerName listenerName;
     public final SecurityProtocol securityProtocol;
@@ -45,16 +46,17 @@ public class RequestContext implements AuthorizableRequestContext {
     public final Optional<KafkaPrincipalSerde> principalSerde;
 
     public RequestContext(RequestHeader header,
-                          String connectionId,
-                          InetAddress clientAddress,
-                          KafkaPrincipal principal,
-                          ListenerName listenerName,
-                          SecurityProtocol securityProtocol,
-                          ClientInformation clientInformation,
-                          boolean fromPrivilegedListener) {
+        String connectionId,
+        InetAddress clientAddress,
+        KafkaPrincipal principal,
+        ListenerName listenerName,
+        SecurityProtocol securityProtocol,
+        ClientInformation clientInformation,
+        boolean fromPrivilegedListener) {
         this(header,
             connectionId,
             clientAddress,
+            1234,
             principal,
             listenerName,
             securityProtocol,
@@ -66,6 +68,49 @@ public class RequestContext implements AuthorizableRequestContext {
     public RequestContext(RequestHeader header,
                           String connectionId,
                           InetAddress clientAddress,
+                          int clientPort,
+                          KafkaPrincipal principal,
+                          ListenerName listenerName,
+                          SecurityProtocol securityProtocol,
+                          ClientInformation clientInformation,
+                          boolean fromPrivilegedListener) {
+        this(header,
+            connectionId,
+            clientAddress,
+            clientPort,
+            principal,
+            listenerName,
+            securityProtocol,
+            clientInformation,
+            fromPrivilegedListener,
+            Optional.empty());
+    }
+
+    public RequestContext(RequestHeader header,
+        String connectionId,
+        InetAddress clientAddress,
+        KafkaPrincipal principal,
+        ListenerName listenerName,
+        SecurityProtocol securityProtocol,
+        ClientInformation clientInformation,
+        boolean fromPrivilegedListener,
+        Optional<KafkaPrincipalSerde> principalSerde) {
+        this(header,
+            connectionId,
+            clientAddress,
+            1234,
+            principal,
+            listenerName,
+            securityProtocol,
+            clientInformation,
+            fromPrivilegedListener,
+            principalSerde);
+    }
+
+    public RequestContext(RequestHeader header,
+                          String connectionId,
+                          InetAddress clientAddress,
+                          int clientPort,
                           KafkaPrincipal principal,
                           ListenerName listenerName,
                           SecurityProtocol securityProtocol,
@@ -75,6 +120,7 @@ public class RequestContext implements AuthorizableRequestContext {
         this.header = header;
         this.connectionId = connectionId;
         this.clientAddress = clientAddress;
+        this.clientPort = clientPort;
         this.principal = principal;
         this.listenerName = listenerName;
         this.securityProtocol = securityProtocol;
