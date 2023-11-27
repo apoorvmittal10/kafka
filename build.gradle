@@ -931,6 +931,7 @@ project(':core') {
     implementation project(':storage')
     implementation project(':server')
 
+    implementation libs.grpcNetty
     implementation libs.argparse4j
     implementation libs.commonsValidator
     implementation libs.jacksonDatabind
@@ -959,6 +960,13 @@ project(':core') {
     }
     // ZooKeeperMain depends on commons-cli but declares the dependency as `provided`
     implementation libs.commonsCli
+    // opentelemetry dependencies
+    implementation libs.opentelemetryProto
+    implementation libs.grpcApi
+    implementation libs.grpcNetty
+    implementation libs.grpcCore
+    implementation libs.grpcStub
+    implementation libs.grpcProtobuf
 
     compileOnly libs.log4j
 
@@ -1406,6 +1414,19 @@ project(':clients') {
     implementation libs.snappy
     implementation libs.slf4jApi
     implementation libs.opentelemetryProto
+    implementation libs.opentelemetryJava
+    implementation libs.opentelemetryPrometheus
+    implementation libs.micrometer
+    implementation libs.micrometerJmx
+    implementation libs.micrometerPrometheus
+    implementation libs.opentelemetryOTLP
+    implementation libs.hdrHistogram
+    implementation libs.grpcApi
+    implementation libs.grpcNetty
+    implementation libs.grpcCore
+    implementation libs.grpcStub
+    implementation libs.grpcProtobuf
+    implementation libs.metrics
 
     // libraries which should be added as runtime dependencies in generated pom.xml should be defined here:
     shadow libs.zstd
@@ -1428,6 +1449,8 @@ project(':clients') {
     testRuntimeOnly libs.slf4jlog4j
     testRuntimeOnly libs.jacksonDatabind
     testRuntimeOnly libs.jacksonJDK8Datatypes
+    testImplementation libs.jose4j
+    testImplementation libs.jacksonJaxrsJsonProvider
 
     generator project(':generator')
   }
@@ -1668,6 +1691,7 @@ project(':server-common') {
 
   dependencies {
     api project(':clients')
+    implementation libs.grpcNetty
     implementation libs.slf4jApi
     implementation libs.metrics
     implementation libs.joptSimple
