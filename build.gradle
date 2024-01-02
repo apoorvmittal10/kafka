@@ -20,13 +20,15 @@ import java.nio.charset.StandardCharsets
 
 buildscript {
   repositories {
-    mavenCentral()
+    // mavenCentral()
+    jcenter()
   }
   apply from: "$rootDir/gradle/dependencies.gradle"
 
   dependencies {
     // For Apache Rat plugin to ignore non-Git files
     classpath "org.ajoberstar.grgit:grgit-core:$versions.grgit"
+    classpath "org.jfrog.buildinfo:build-info-extractor-gradle:4+"
   }
 }
 
@@ -116,8 +118,11 @@ ext {
 
 allprojects {
 
+  apply plugin: "com.jfrog.artifactory"
+
   repositories {
-    mavenCentral()
+    // mavenCentral()
+    jcenter()
   }
 
   dependencyUpdates {
@@ -159,6 +164,26 @@ allprojects {
     }
   }
   task printAllDependencies(type: DependencyReportTask) {}
+}
+
+artifactory {
+    contextUrl = "${artifactory_contextUrl}"   //The base Artifactory URL if not overridden by the publisher/resolver
+    publish {
+        repository {
+            repoKey = 'apoorv-kafka-test-gradle-dev-local'
+            username = "${artifactory_user}"
+            password = "${artifactory_password}"
+            maven = true
+        }
+    }
+    resolve {
+        repository {
+            repoKey = 'apoorv-kafka-test-gradle-dev'
+            username = "${artifactory_user}"
+            password = "${artifactory_password}"
+            maven = true
+        }
+    }
 }
 
 def determineCommitId() {
@@ -290,10 +315,10 @@ subprojects {
       repositories {
         // To test locally, invoke gradlew with `-PmavenUrl=file:///some/local/path`
         maven {
-          url = mavenUrl
+          url = 'https://apoorv.jfrog.io/artifactory/apoorv-kafka-test-gradle-dev'
           credentials {
-            username = mavenUsername
-            password = mavenPassword
+            username = 'apoorvmittal10@gmail.com'
+            password = 'cmVmdGtuOjAxOjE3MzU0NjE5NTQ6bTM4U1h2NW9xa0xrbHFJdVg4S2VSS0ozamxD'
           }
         }
       }
@@ -303,7 +328,7 @@ subprojects {
             from components.java
           } else {
             apply plugin: 'com.github.johnrengelman.shadow'
-            project.shadow.component(mavenJava)
+            artifact shadowJar
           }
 
           afterEvaluate {
