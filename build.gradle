@@ -1419,6 +1419,7 @@ project(':generator') {
 }
 
 project(':clients') {
+  
   archivesBaseName = "kafka-clients"
 
   configurations {
