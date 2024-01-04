@@ -328,7 +328,8 @@ subprojects {
             from components.java
           } else {
             apply plugin: 'com.github.johnrengelman.shadow'
-            artifact shadowJar
+            project.shadow.component(mavenJava)
+            // artifact shadowJar
           }
 
           afterEvaluate {
@@ -1419,7 +1420,6 @@ project(':generator') {
 }
 
 project(':clients') {
-  
   archivesBaseName = "kafka-clients"
 
   configurations {
