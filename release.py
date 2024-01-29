@@ -75,8 +75,8 @@ delete_gitrefs = False
 work_dir = None
 
 def fail(msg):
-    if work_dir:
-        cmd("Cleaning up work directory", "rm -rf %s" % work_dir)
+    # if work_dir:
+    #     cmd("Cleaning up work directory", "rm -rf %s" % work_dir)
 
     if delete_gitrefs:
         try:
@@ -504,13 +504,13 @@ try:
 except Exception as e:
     fail(f"Pre-requisite not met: Unable to check if maven cli is installed. Error: {e}")
 
-try:
-    test_sftp = subprocess.run(f"sftp {apache_id}@home.apache.org".split())
-    if test_sftp.returncode != 0:
-        fail("Pre-requisite not met: Cannot establish sftp connection. Please check your apache-id and ssh keys.")
-    print("Pre-requisite met: sftp connection is successful")
-except Exception as e:
-    fail(f"Pre-requisite not met: Unable to check if sftp connection is successful. Error: {e}")
+# try:
+#     test_sftp = subprocess.run(f"sftp {apache_id}@home.apache.org".split())
+#     if test_sftp.returncode != 0:
+#         fail("Pre-requisite not met: Cannot establish sftp connection. Please check your apache-id and ssh keys.")
+#     print("Pre-requisite met: sftp connection is successful")
+# except Exception as e:
+#     fail(f"Pre-requisite not met: Unable to check if sftp connection is successful. Error: {e}")
 
 try:
     test_svn = cmd_output("svn --version")
@@ -623,18 +623,18 @@ cmd("Checking out RC tag", "git checkout -b %s %s" % (release_version, rc_tag), 
 current_year = datetime.datetime.now().year
 cmd("Verifying the correct year in NOTICE", "grep %s NOTICE" % current_year, cwd=kafka_dir)
 
-with open(os.path.join(artifacts_dir, "RELEASE_NOTES.html"), 'w') as f:
-    print("Generating release notes")
-    try:
-        subprocess.check_call([sys.executable, "./release_notes.py", release_version], stdout=f)
-    except subprocess.CalledProcessError as e:
-        print_output(e.output)
+# with open(os.path.join(artifacts_dir, "RELEASE_NOTES.html"), 'w') as f:
+#     print("Generating release notes")
+#     try:
+#         subprocess.check_call([sys.executable, "./release_notes.py", release_version], stdout=f)
+#     except subprocess.CalledProcessError as e:
+#         print_output(e.output)
 
-        print("*************************************************")
-        print("*** First command failure occurred here.      ***")
-        print("*** Will now try to clean up working state.   ***")
-        print("*************************************************")
-        fail("")
+#         print("*************************************************")
+#         print("*** First command failure occurred here.      ***")
+#         print("*** Will now try to clean up working state.   ***")
+#         print("*************************************************")
+#         fail("")
 
 
 params = { 'release_version': release_version,
@@ -675,7 +675,7 @@ with open(os.path.expanduser("~/.gradle/gradle.properties")) as f:
     contents = f.read()
 if not user_ok("Going to build and upload mvn artifacts based on these settings:\n" + contents + '\nOK (y/n)?: '):
     fail("Retry again later")
-cmd("Building and uploading archives", "./gradlewAll publish", cwd=kafka_dir, env=jdk8_env, shell=True)
+cmd("Building and uploading archives", "./gradlewAll publish --debug", cwd=kafka_dir, env=jdk8_env, shell=True)
 cmd("Building and uploading archives", "mvn deploy -Pgpg-signing", cwd=streams_quickstart_dir, env=jdk8_env, shell=True)
 
 release_notification_props = { 'release_version': release_version,
@@ -737,60 +737,60 @@ cmd("Resetting repository working state", "git reset --hard HEAD && git checkout
 cmd("Deleting git branches %s" % release_version, "git branch -D %s" % release_version, shell=True)
 
 
-email_contents = """
-To: dev@kafka.apache.org, users@kafka.apache.org, kafka-clients@googlegroups.com
-Subject: [VOTE] %(release_version)s RC%(rc)s
+# email_contents = """
+# To: dev@kafka.apache.org, users@kafka.apache.org, kafka-clients@googlegroups.com
+# Subject: [VOTE] %(release_version)s RC%(rc)s
 
-Hello Kafka users, developers and client-developers,
-
-This is the first candidate for release of Apache Kafka %(release_version)s.
-
-<DESCRIPTION OF MAJOR CHANGES, INCLUDE INDICATION OF MAJOR/MINOR RELEASE>
-
-Release notes for the %(release_version)s release:
-https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/RELEASE_NOTES.html
-
-*** Please download, test and vote by <VOTING DEADLINE, e.g. Monday, March 28, 9am PT>
-<THE RELEASE POLICY (https://www.apache.org/legal/release-policy.html#release-approval) REQUIRES VOTES TO BE OPEN FOR MINIMUM OF 3 DAYS THEREFORE VOTING DEADLINE SHOULD BE AT LEAST 72 HOURS FROM THE TIME THIS EMAIL IS SENT.>
-
-Kafka's KEYS file containing PGP keys we use to sign the release:
-https://kafka.apache.org/KEYS
-
-* Release artifacts to be voted upon (source and binary):
-https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/
-
-<USE docker/README.md FOR STEPS TO CREATE RELEASE CANDIDATE DOCKER IMAGE>
-* Docker release artifact to be voted upon:
-apache/kafka:%(rc_tag)s
-
-* Maven artifacts to be voted upon:
-https://repository.apache.org/content/groups/staging/org/apache/kafka/
-
-* Javadoc:
-https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/javadoc/
-
-* Tag to be voted upon (off %(dev_branch)s branch) is the %(release_version)s tag:
-https://github.com/apache/kafka/releases/tag/%(rc_tag)s
-
-* Documentation:
-https://kafka.apache.org/%(docs_version)s/documentation.html
-
-* Protocol:
-https://kafka.apache.org/%(docs_version)s/protocol.html
-
-* Successful Jenkins builds for the %(dev_branch)s branch:
-Unit/integration tests: https://ci-builds.apache.org/job/Kafka/job/kafka/job/%(dev_branch)s/<BUILD NUMBER>/
-System tests: https://jenkins.confluent.io/job/system-test-kafka/job/%(dev_branch)s/<BUILD_NUMBER>/
-
-<USE docker/README.md FOR STEPS TO RUN DOCKER BUILD TEST GITHUB ACTIONS>
-* Successful Docker Image Github Actions Pipeline for %(dev_branch)s branch:
-Docker Build Test Pipeline: https://github.com/apache/kafka/actions/runs/<RUN_NUMBER>
-
-/**************************************
-
-Thanks,
-<YOU>
-""" % release_notification_props
+# Hello Kafka users, developers and client-developers,
+#
+# This is the first candidate for release of Apache Kafka %(release_version)s.
+#
+# <DESCRIPTION OF MAJOR CHANGES, INCLUDE INDICATION OF MAJOR/MINOR RELEASE>
+#
+# Release notes for the %(release_version)s release:
+# https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/RELEASE_NOTES.html
+#
+# *** Please download, test and vote by <VOTING DEADLINE, e.g. Monday, March 28, 9am PT>
+# <THE RELEASE POLICY (https://www.apache.org/legal/release-policy.html#release-approval) REQUIRES VOTES TO BE OPEN FOR MINIMUM OF 3 DAYS THEREFORE VOTING DEADLINE SHOULD BE AT LEAST 72 HOURS FROM THE TIME THIS EMAIL IS SENT.>
+#
+# Kafka's KEYS file containing PGP keys we use to sign the release:
+# https://kafka.apache.org/KEYS
+#
+# * Release artifacts to be voted upon (source and binary):
+# https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/
+#
+# <USE docker/README.md FOR STEPS TO CREATE RELEASE CANDIDATE DOCKER IMAGE>
+# * Docker release artifact to be voted upon:
+# apache/kafka:%(rc_tag)s
+#
+# * Maven artifacts to be voted upon:
+# https://repository.apache.org/content/groups/staging/org/apache/kafka/
+#
+# * Javadoc:
+# https://home.apache.org/~%(apache_id)s/kafka-%(rc_tag)s/javadoc/
+#
+# * Tag to be voted upon (off %(dev_branch)s branch) is the %(release_version)s tag:
+# https://github.com/apache/kafka/releases/tag/%(rc_tag)s
+#
+# * Documentation:
+# https://kafka.apache.org/%(docs_version)s/documentation.html
+#
+# * Protocol:
+# https://kafka.apache.org/%(docs_version)s/protocol.html
+#
+# * Successful Jenkins builds for the %(dev_branch)s branch:
+# Unit/integration tests: https://ci-builds.apache.org/job/Kafka/job/kafka/job/%(dev_branch)s/<BUILD NUMBER>/
+# System tests: https://jenkins.confluent.io/job/system-test-kafka/job/%(dev_branch)s/<BUILD_NUMBER>/
+#
+# <USE docker/README.md FOR STEPS TO RUN DOCKER BUILD TEST GITHUB ACTIONS>
+# * Successful Docker Image Github Actions Pipeline for %(dev_branch)s branch:
+# Docker Build Test Pipeline: https://github.com/apache/kafka/actions/runs/<RUN_NUMBER>
+#
+# /**************************************
+#
+# Thanks,
+# <YOU>
+# """ % release_notification_props
 
 print()
 print()
