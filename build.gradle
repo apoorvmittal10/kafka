@@ -20,13 +20,15 @@ import java.nio.charset.StandardCharsets
 
 buildscript {
   repositories {
-    mavenCentral()
+    // mavenCentral()
+    jcenter()
   }
   apply from: "$rootDir/gradle/dependencies.gradle"
 
   dependencies {
     // For Apache Rat plugin to ignore non-Git files
     classpath "org.ajoberstar.grgit:grgit-core:$versions.grgit"
+    classpath "org.jfrog.buildinfo:build-info-extractor-gradle:4+"
   }
 }
 
@@ -162,13 +164,16 @@ ext {
     libs.log4j2Api,
     libs.log4j2Core
   ]
-  
+
 }
 
 allprojects {
 
+  apply plugin: "com.jfrog.artifactory"
+
   repositories {
-    mavenCentral()
+    // mavenCentral()
+    jcenter()
   }
 
   dependencyUpdates {
@@ -227,6 +232,26 @@ allprojects {
     delete "${projectDir}/src/generated-test"
   }
 }
+
+//artifactory {
+//    contextUrl = "${artifactory_contextUrl}"   //The base Artifactory URL if not overridden by the publisher/resolver
+//    publish {
+//        repository {
+//            repoKey = 'apoorv-kafka-test-gradle-dev-local'
+//            username = "${artifactory_user}"
+//            password = "${artifactory_password}"
+//            maven = true
+//        }
+//    }
+//    resolve {
+//        repository {
+//            repoKey = 'apoorv-kafka-test-gradle-dev'
+//            username = "${artifactory_user}"
+//            password = "${artifactory_password}"
+//            maven = true
+//        }
+//    }
+//}
 
 def determineCommitId() {
   def takeFromHash = 16
@@ -355,10 +380,10 @@ subprojects {
       repositories {
         // To test locally, invoke gradlew with `-PmavenUrl=file:///some/local/path`
         maven {
-          url = mavenUrl
+          url = 'https://apoorv.jfrog.io/artifactory/apoorv-kafka-test-gradle-dev'
           credentials {
-            username = mavenUsername
-            password = mavenPassword
+            username = 'apoorvmittal10@gmail.com'
+            password = 'cmVmdGtuOjAxOjE3MzU0NjE5NTQ6bTM4U1h2NW9xa0xrbHFJdVg4S2VSS0ozamxD'
           }
         }
       }
@@ -389,6 +414,18 @@ subprojects {
             }
           }
 
+          mavenJava.artifacts.each {
+            println "[APM]: File ${it.file}"
+            //                println "[APM]: Artifact id ${it.artifactId}"
+            //                println "[APM]: Artifact id value ${it.artifactId*.value}"
+            def matcher = it.file =~ /clients.*\.jar\.asc$/
+            println "[APM]: Matcher ${matcher.find()}"
+            if (matcher.find()) {
+              artifactId = "kafka-clients"
+              extension = 'jar.asc'
+            }
+          }
+
           afterEvaluate {
             ["srcJar", "javadocJar", "scaladocJar", "testJar", "testSrcJar"].forEach { taskName ->
               def task = tasks.findByName(taskName)
@@ -413,11 +450,11 @@ subprojects {
       }
     }
 
-    if (shouldSign) {
+//    if (shouldSign) {
       signing {
         sign publishing.publications.mavenJava
       }
-    }
+//    }
   }
 
   def testLoggingEvents = ["passed", "skipped", "failed"]
@@ -574,7 +611,7 @@ subprojects {
         maxFailures = userMaxTestRetryFailures
       }
     }
-    
+
     finalizedBy("copyTestXml")
   }
 
@@ -1895,6 +1932,8 @@ project(':clients') {
 
   shadowJar {
     dependsOn createVersionFile
+    configurations = [project.configurations.compileClasspath]
+    archivesBaseName = "kafka-clients"
     // archiveClassifier defines the classifier for the shadow jar, the default is 'all'.
     // We don't want to use the default classifier because it will cause the shadow jar to
     // overwrite the original jar. We also don't want to use the 'shadow' classifier because
@@ -1925,7 +1964,7 @@ project(':clients') {
 
   jar {
     enabled false
-    dependsOn 'shadowJar'
+    dependsOn(shadowJar { archiveClassifier = null })
   }
 
   clean.doFirst {
