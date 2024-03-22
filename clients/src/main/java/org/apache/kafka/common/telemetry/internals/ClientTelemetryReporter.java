@@ -945,7 +945,7 @@ public class ClientTelemetryReporter implements MetricsReporter {
      * Representation of the telemetry subscription that is retrieved from the cluster at startup and
      * then periodically afterward, following the telemetry push.
      */
-    static class ClientTelemetrySubscription {
+    public static class ClientTelemetrySubscription {
 
         private final Uuid clientInstanceId;
         private final int subscriptionId;

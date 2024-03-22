@@ -304,7 +304,8 @@ subprojects {
             from components.java
           } else {
             apply plugin: 'com.github.johnrengelman.shadow'
-            project.shadow.component(mavenJava)
+            artifact shadowJar
+//            project.shadow.component(mavenJava)
           }
 
           afterEvaluate {
@@ -939,6 +940,7 @@ project(':core') {
     implementation project(':storage')
     implementation project(':server')
 
+    implementation libs.grpcNetty
     implementation libs.argparse4j
     implementation libs.commonsValidator
     implementation libs.jacksonDatabind
@@ -967,6 +969,13 @@ project(':core') {
     }
     // ZooKeeperMain depends on commons-cli but declares the dependency as `provided`
     implementation libs.commonsCli
+    // opentelemetry dependencies
+    implementation libs.opentelemetryProto
+    implementation libs.grpcApi
+    implementation libs.grpcNetty
+    implementation libs.grpcCore
+    implementation libs.grpcStub
+    implementation libs.grpcProtobuf
 
     compileOnly libs.log4j
 
@@ -1455,6 +1464,8 @@ project(':clients') {
     testRuntimeOnly libs.slf4jlog4j
     testRuntimeOnly libs.jacksonDatabind
     testRuntimeOnly libs.jacksonJDK8Datatypes
+    testImplementation libs.jose4j
+    testImplementation libs.jacksonJaxrsJsonProvider
 
     generator project(':generator')
   }
@@ -1696,6 +1707,7 @@ project(':server-common') {
 
   dependencies {
     api project(':clients')
+    implementation libs.grpcNetty
     implementation libs.slf4jApi
     implementation libs.metrics
     implementation libs.joptSimple
