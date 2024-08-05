@@ -82,6 +82,7 @@ import org.apache.kafka.coordinator.group.modern.MemberState;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroup;
 import org.apache.kafka.coordinator.group.modern.consumer.ConsumerGroupBuilder;
 import org.apache.kafka.coordinator.group.modern.share.ShareGroup;
+import org.apache.kafka.coordinator.group.modern.share.ShareGroupBuilder;
 import org.apache.kafka.coordinator.group.runtime.CoordinatorResult;
 import org.apache.kafka.image.MetadataImage;
 import org.apache.kafka.server.common.ApiMessageAndVersion;
@@ -406,6 +407,7 @@ public class GroupMetadataManagerTestContext {
         private ConsumerGroupMigrationPolicy consumerGroupMigrationPolicy = ConsumerGroupMigrationPolicy.DISABLED;
         // Share group configs
         private ShareGroupPartitionAssignor shareGroupAssignor = new MockPartitionAssignor("share");
+        private final List<ShareGroupBuilder> shareGroupBuilders = new ArrayList<>();
         private int shareGroupMaxSize = Integer.MAX_VALUE;
 
         public Builder withMetadataImage(MetadataImage metadataImage) {
@@ -458,6 +460,11 @@ public class GroupMetadataManagerTestContext {
             return this;
         }
 
+        public Builder withShareGroup(ShareGroupBuilder builder) {
+            this.shareGroupBuilders.add(builder);
+            return this;
+        }
+
         public Builder withShareGroupAssignor(ShareGroupPartitionAssignor shareGroupAssignor) {
             this.shareGroupAssignor = shareGroupAssignor;
             return this;
@@ -503,7 +510,7 @@ public class GroupMetadataManagerTestContext {
             );
 
             consumerGroupBuilders.forEach(builder -> builder.build(metadataImage.topics()).forEach(context::replay));
-            consumerGroupBuilders.forEach(builder -> builder.build(metadataImage.topics()).forEach(context::replay));
+            shareGroupBuilders.forEach(builder -> builder.build(metadataImage.topics()).forEach(context::replay));
 
             context.commit();
 
