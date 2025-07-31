@@ -142,6 +142,8 @@ public class DefaultStatePersister implements Persister {
                 log.debug("{}-{}-{}: stateEpoch - {}, leaderEpoch - {}.",
                     groupId, topicData.topicId(), partitionData.partition(), partitionData.stateEpoch(), partitionData.leaderEpoch());
 
+                log.info("[APM] start offset: {}, first offset: {}, difference: {}", partitionData.startOffset(), partitionData.stateBatches().get(0).firstOffset(), partitionData.stateBatches().get(0).firstOffset() - partitionData.startOffset());
+
                 handlers.add(
                     stateManager.new WriteStateHandler(
                         groupId,

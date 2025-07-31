@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cc-trogdor-controller
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cc-trogdor-controller-pkc-devc9zvjw5
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cc-cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: cc-trogdor-controller
+    namespace: pkc-devc9zvjw5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cc-trogdor-controller
+spec:
+  selector:
+    matchLabels:
+      app: trogdor-controller
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: trogdor-controller
+    spec:
+      serviceAccountName: cc-trogdor-controller
+      containers:
+        - name: trogdor-controller
+          image: 037803949979.dkr.ecr.us-west-2.amazonaws.com/confluentinc/trogdor-controller:v0.295.0
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          imagePullPolicy: Always
+          command: ["/bin/sh", "-c"]
+          args:
+            - /bin/trogdor-controller generic
+              --trogdor-agent-image 037803949979.dkr.ecr.us-west-2.amazonaws.com/confluentinc/cc-trogdor:v0.10097.0-8.1.0-0-ce
+              --kafka-key-override 47Y7GXNKHDXIOBQV
+              --kafka-secret-override cfltQfGVUk8Ph+VAfnbLfFkt0R0/Hdpm3XdiFAnbR9qkhaU7AriMkY4txrilRlLA
+              --external-bootstrap-server pkc-devc9zvjw5.us-west-2.aws.devel.cpdev.cloud:9092
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trogdor-controller-config
+data:
+  config: |
+    topics:                             
+      test-topic-2:
+        partitions: 1
+        producers: 5
+        producerKeyGenerator:
+          type: sequential
+          size: 4
+          offset: 0
+        produceThroughput: 20MB
+        messageSize: 1KB
+        topicConfig:
+          retention.ms: 604800000

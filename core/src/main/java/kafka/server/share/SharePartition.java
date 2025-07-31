@@ -242,6 +242,12 @@ public class SharePartition {
     private final AcquisitionLockTimeoutHandler timeoutHandler;
 
     /**
+     * The replica manager is used to check to see if any delayed share fetch request can be completed because of data
+     * availability due to acquisition lock timeout.
+     */
+    private final ReplicaManager replicaManager;
+
+    /**
      * The share partition start offset specifies the partition start offset from which the records
      * are cached in the cachedState of the sharePartition.
      */
@@ -294,12 +300,6 @@ public class SharePartition {
      * The fetch lock idle duration is used to track the time for which the fetch lock is idle.
      */
     private long fetchLockIdleDurationMs;
-
-    /**
-     * The replica manager is used to check to see if any delayed share fetch request can be completed because of data
-     * availability due to acquisition lock timeout.
-     */
-    private final ReplicaManager replicaManager;
 
     SharePartition(
         String groupId,
@@ -1245,10 +1245,7 @@ public class SharePartition {
                     continue;
                 }
 
-                offsetState.getValue().archive(EMPTY_MEMBER_ID);
-                if (initialState == RecordState.ACQUIRED) {
-                    offsetState.getValue().cancelAndClearAcquisitionLockTimeoutTask();
-                }
+                offsetState.getValue().archive();
                 isAnyOffsetArchived = true;
             }
             return isAnyOffsetArchived;
@@ -1263,10 +1260,7 @@ public class SharePartition {
             log.trace("Archiving complete batch: {} for the share partition: {}-{}", inFlightBatch, groupId, topicIdPartition);
             if (inFlightBatch.batchState() == initialState) {
                 // Change the state of complete batch since the same state exists for the entire inFlight batch.
-                inFlightBatch.archiveBatch(EMPTY_MEMBER_ID);
-                if (initialState == RecordState.ACQUIRED) {
-                    inFlightBatch.cancelAndClearAcquisitionLockTimeoutTask();
-                }
+                inFlightBatch.archiveBatch();
                 return true;
             }
         } finally {
@@ -1799,6 +1793,10 @@ public class SharePartition {
                     if (throwable.isPresent()) {
                         return throwable;
                     }
+
+                    if (inFlightBatch.batchHasOngoingStateTransition()) {
+                        return Optional.of(new InvalidRecordStateException("The batch has on going transition."));
+                    }
                 }
 
                 // Determine if the in-flight batch is a full match from the request batch.
@@ -1899,7 +1897,15 @@ public class SharePartition {
                             + " partition: {}-{}", offsetState.getKey(), inFlightBatch, groupId,
                         topicIdPartition);
                     return Optional.of(new InvalidRecordStateException(
-                        "The batch cannot be acknowledged. The offset is not acquired."));
+                        "The offset cannot be acknowledged. The offset is not acquired."));
+                }
+
+                if (offsetState.getValue().hasOngoingStateTransition()) {
+                    log.debug("The offset has on going transition, offset: {} batch: {} for the share"
+                            + " partition: {}-{}", offsetState.getKey(), inFlightBatch, groupId,
+                        topicIdPartition);
+                    return Optional.of(new InvalidRecordStateException(
+                        "The offset cannot be acknowledged. The offset has on going transition."));
                 }
 
                 // Check if member id is the owner of the offset.
@@ -2038,60 +2044,68 @@ public class SharePartition {
         List<InFlightState> updatedStates,
         List<PersisterStateBatch> stateBatches
     ) {
-        lock.writeLock().lock();
-        try {
-            if (throwable != null) {
-                // Log in DEBUG to avoid flooding of logs for a faulty client.
-                log.debug("Request failed for updating state, rollback any changed state"
-                    + " for the share partition: {}-{}", groupId, topicIdPartition);
-                updatedStates.forEach(state -> state.completeStateTransition(false));
-                future.completeExceptionally(throwable);
-                return;
-            }
+        if (throwable != null) {
+            // Log in DEBUG to avoid flooding of logs for a faulty client.
+            log.debug("Request failed for updating state, rollback any changed state"
+                + " for the share partition: {}-{}", groupId, topicIdPartition);
+            updatedStates.forEach(state -> {
+                state.completeStateTransition(false);
+                // If state transition fails in write state RPC, rollback to the original state if record
+                // hasn't reached a terminal state. If acquisition lock has expired by that time, the record can
+                // be stuck in ACQUIRED state unless the acquisition lock task is run again.
+                if (!state.isTerminalState() && state.acquisitionLockTimeoutTask().hasExpired()) {
+                    state.acquisitionLockTimeoutTask().processAcquisitionLockTimeout();
+                }
+                state.completeStateTransition();
+            });
+            future.completeExceptionally(throwable);
+            return;
+        }
 
-            if (stateBatches.isEmpty() && updatedStates.isEmpty()) {
-                future.complete(null);
-                return;
-            }
-        } finally {
-            lock.writeLock().unlock();
+        if (stateBatches.isEmpty() && updatedStates.isEmpty()) {
+            future.complete(null);
+            return;
         }
 
         writeShareGroupState(stateBatches).whenComplete((result, exception) -> {
-            // There can be a pending delayed share fetch requests for the share partition which are waiting
-            // on the startOffset to move ahead, hence track if the state is updated in the cache. If
-            // yes, then notify the delayed share fetch purgatory to complete the pending requests.
-            boolean cacheStateUpdated = false;
-            lock.writeLock().lock();
-            try {
-                if (exception != null) {
-                    log.debug("Failed to write state to persister for the share partition: {}-{}",
-                        groupId, topicIdPartition, exception);
-                    updatedStates.forEach(state -> state.completeStateTransition(false));
-                    future.completeExceptionally(exception);
-                    return;
-                }
-
-                log.trace("State change request successful for share partition: {}-{}",
-                    groupId, topicIdPartition);
+            if (exception != null) {
+                log.debug("Failed to write state to persister for the share partition: {}-{}",
+                    groupId, topicIdPartition, exception);
                 updatedStates.forEach(state -> {
-                    state.completeStateTransition(true);
-                    // Cancel the acquisition lock timeout task for the state since it is acknowledged/released successfully.
-                    state.cancelAndClearAcquisitionLockTimeoutTask();
-                    if (state.state() == RecordState.AVAILABLE) {
-                        updateFindNextFetchOffset(true);
+                    // In case of failure when transition state is rolled back then it should always
+                    // be rolled back to ACQUIRED state. As the future is not yet completed for the
+                    // client request hence there shouldn't be any further acknowledgement for the same
+                    // record. Hence, no other operation should ideally be performed on the record until
+                    // the acquisition lock timeout task is run again, if required.
+                    state.rollbackStateTransition();
+                    // If state transition fails in write state RPC, rollback to the original state if record
+                    // hasn't reached a terminal state. If acquisition lock has expired by that time, the record can
+                    // be stuck in ACQUIRED state unless the acquisition lock task is run again.
+                    if (!state.isTerminalState() && state.acquisitionLockTimeoutTask().hasExpired()) {
+                        state.acquisitionLockTimeoutTask().processAcquisitionLockTimeout();
                     }
+                    state.completeStateTransition();
                 });
-                // Update the cached state and start and end offsets after acknowledging/releasing the acquired records.
-                cacheStateUpdated = maybeUpdateCachedStateAndOffsets();
-                future.complete(null);
-            } finally {
-                lock.writeLock().unlock();
-                // Maybe complete the delayed share fetch request if the state has been changed in cache
-                // which might have moved start offset ahead. Hence, the pending delayed share fetch
-                // request can be completed. The call should be made outside the lock to avoid deadlock.
-                maybeCompleteDelayedShareFetchRequest(cacheStateUpdated);
+                future.completeExceptionally(exception);
+                return;
             }
+
+            log.trace("State change request successful for share partition: {}-{}",
+                groupId, topicIdPartition);
+            updatedStates.forEach(state -> {
+                state.completeStateTransition(true);
+                if (state.state() == RecordState.AVAILABLE) {
+                    updateFindNextFetchOffset(true);
+                }
+            });
+            // Update the cached state and start and end offsets after acknowledging/releasing the acquired records.
+            boolean cacheStateUpdated = maybeUpdateCachedStateAndOffsets();
+            future.complete(null);
+            // Maybe complete the delayed share fetch request if the state has been changed in cache
+            // which might have moved start offset ahead. Hence, the pending delayed share fetch
+            // request can be completed. If yes, then notify the delayed share fetch purgatory to
+            // complete the pending requests. The call should be made outside the lock to avoid deadlock.
+            maybeCompleteDelayedShareFetchRequest(cacheStateUpdated);
         });
     }
 
@@ -2289,6 +2303,9 @@ public class SharePartition {
     // Visible for testing
     CompletableFuture<Void> writeShareGroupState(List<PersisterStateBatch> stateBatches) {
         CompletableFuture<Void> future = new CompletableFuture<>();
+        final int epoch = stateEpoch;
+        final long offset = startOffset;
+//        log.info("Write share group state for epoch: {} offset: {}, stateBatches: {}", epoch, offset, stateBatches);
         persister.writeState(new WriteShareGroupStateParameters.Builder()
             .setGroupTopicPartitionData(new GroupTopicPartitionData.Builder<PartitionStateBatchData>()
                 .setGroupId(this.groupId)
@@ -2447,10 +2464,11 @@ public class SharePartition {
                                                                  String memberId) {
         if (inFlightBatch.batchState() == RecordState.ACQUIRED) {
             InFlightState updateResult = inFlightBatch.tryUpdateBatchState(
-                    inFlightBatch.lastOffset() < startOffset ? RecordState.ARCHIVED : RecordState.AVAILABLE,
-                    DeliveryCountOps.NO_OP,
-                    maxDeliveryCount,
-                    EMPTY_MEMBER_ID);
+                inFlightBatch.lastOffset() < startOffset ? RecordState.ARCHIVED : RecordState.AVAILABLE,
+                DeliveryCountOps.NO_OP,
+                maxDeliveryCount,
+                EMPTY_MEMBER_ID,
+                true);
             if (updateResult == null) {
                 log.error("Unable to release acquisition lock on timeout for the batch: {}"
                         + " for the share partition: {}-{} memberId: {}", inFlightBatch, groupId, topicIdPartition, memberId);
@@ -2493,10 +2511,11 @@ public class SharePartition {
                 continue;
             }
             InFlightState updateResult = offsetState.getValue().tryUpdateState(
-                    offsetState.getKey() < startOffset ? RecordState.ARCHIVED : RecordState.AVAILABLE,
-                    DeliveryCountOps.NO_OP,
-                    maxDeliveryCount,
-                    EMPTY_MEMBER_ID);
+                offsetState.getKey() < startOffset ? RecordState.ARCHIVED : RecordState.AVAILABLE,
+                DeliveryCountOps.NO_OP,
+                maxDeliveryCount,
+                EMPTY_MEMBER_ID,
+                true);
             if (updateResult == null) {
                 log.error("Unable to release acquisition lock on timeout for the offset: {} in batch: {}"
                                 + " for the share partition: {}-{} memberId: {}", offsetState.getKey(), inFlightBatch,

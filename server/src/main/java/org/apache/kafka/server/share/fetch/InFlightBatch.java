@@ -147,11 +147,11 @@ public class InFlightBatch {
     /**
      * Archive the batch state. This is used to mark the batch as archived and no further updates
      * are allowed to the batch state.
-     * @param newMemberId The new member id for the records.
      * @throws IllegalStateException if the offset state is maintained and the batch state is not available.
      */
-    public void archiveBatch(String newMemberId) {
-        inFlightState().archive(newMemberId);
+    public void archiveBatch() {
+        inFlightState().archive();
+        getClass().getName();
     }
 
     /**
@@ -166,7 +166,23 @@ public class InFlightBatch {
      * @throws IllegalStateException if the offset state is maintained and the batch state is not available.
      */
     public InFlightState tryUpdateBatchState(RecordState newState, DeliveryCountOps ops, int maxDeliveryCount, String newMemberId) {
-        return inFlightState().tryUpdateState(newState, ops, maxDeliveryCount, newMemberId);
+        return tryUpdateBatchState(newState, ops, maxDeliveryCount, newMemberId, false);
+    }
+
+    /**
+     * Try to update the batch state. The state of the batch can only be updated if the new state is allowed
+     * to be transitioned from old state. The delivery count is not changed if the state update is unsuccessful.
+     *
+     * @param newState The new state of the records.
+     * @param ops      The behavior on the delivery count.
+     * @param maxDeliveryCount The maximum delivery count for the records.
+     * @param newMemberId The new member id for the records.
+     * @param forceUpdate If true, it will force update the state even if there is an ongoing state transition.
+     * @return {@code InFlightState} if update succeeds, null otherwise. Returning state helps update chaining.
+     * @throws IllegalStateException if the offset state is maintained and the batch state is not available.
+     */
+    public InFlightState tryUpdateBatchState(RecordState newState, DeliveryCountOps ops, int maxDeliveryCount, String newMemberId, boolean forceUpdate) {
+        return inFlightState().tryUpdateState(newState, ops, maxDeliveryCount, newMemberId, forceUpdate);
     }
 
     /**

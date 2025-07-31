@@ -24,6 +24,7 @@ import org.apache.kafka.coordinator.group.GroupCoordinatorConfig;
 
 import java.util.Map;
 
+import static org.apache.kafka.common.config.ConfigDef.Importance.LOW;
 import static org.apache.kafka.common.config.ConfigDef.Importance.MEDIUM;
 import static org.apache.kafka.common.config.ConfigDef.Range.atLeast;
 import static org.apache.kafka.common.config.ConfigDef.Range.between;
@@ -72,6 +73,11 @@ public class ShareGroupConfig {
     public static final String SHARE_GROUP_PERSISTER_CLASS_NAME_DOC = "The fully qualified name of a class which implements " +
         "the <code>org.apache.kafka.server.share.Persister</code> interface.";
 
+    public static final String SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_CONFIG = "group.share.faulty.persister.fail.percentage";
+    public static final int SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_DEFAULT = 25;
+    public static final String SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_DOC = "The fault percentage for the faulty share group persister. " +
+        "This is only used in tests and should not be set in production.";
+
     public static final ConfigDef CONFIG_DEF = new ConfigDef()
             .defineInternal(SHARE_GROUP_ENABLE_CONFIG, BOOLEAN, SHARE_GROUP_ENABLE_DEFAULT, null, MEDIUM, SHARE_GROUP_ENABLE_DOC)
             .define(SHARE_GROUP_DELIVERY_COUNT_LIMIT_CONFIG, INT, SHARE_GROUP_DELIVERY_COUNT_LIMIT_DEFAULT, between(2, 10), MEDIUM, SHARE_GROUP_DELIVERY_COUNT_LIMIT_DOC)
@@ -81,7 +87,8 @@ public class ShareGroupConfig {
             .define(SHARE_GROUP_PARTITION_MAX_RECORD_LOCKS_CONFIG, INT, SHARE_GROUP_PARTITION_MAX_RECORD_LOCKS_DEFAULT, between(100, 10000), MEDIUM, SHARE_GROUP_PARTITION_MAX_RECORD_LOCKS_DOC)
             .define(SHARE_FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_CONFIG, INT, SHARE_FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_DEFAULT, MEDIUM, SHARE_FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_DOC)
             .define(SHARE_GROUP_MAX_SHARE_SESSIONS_CONFIG, INT, SHARE_GROUP_MAX_SHARE_SESSIONS_DEFAULT, atLeast(1), MEDIUM, SHARE_GROUP_MAX_SHARE_SESSIONS_DOC)
-            .defineInternal(SHARE_GROUP_PERSISTER_CLASS_NAME_CONFIG, STRING, SHARE_GROUP_PERSISTER_CLASS_NAME_DEFAULT, null, MEDIUM, SHARE_GROUP_PERSISTER_CLASS_NAME_DOC);
+            .defineInternal(SHARE_GROUP_PERSISTER_CLASS_NAME_CONFIG, STRING, SHARE_GROUP_PERSISTER_CLASS_NAME_DEFAULT, null, MEDIUM, SHARE_GROUP_PERSISTER_CLASS_NAME_DOC)
+            .defineInternal(SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_CONFIG, INT, SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_DEFAULT, between(0, 100), LOW, SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_DOC);
 
     private final boolean isShareGroupEnabled;
     private final int shareGroupPartitionMaxRecordLocks;
@@ -92,6 +99,7 @@ public class ShareGroupConfig {
     private final int shareFetchPurgatoryPurgeIntervalRequests;
     private final int shareGroupMaxShareSessions;
     private final String shareGroupPersisterClassName;
+    private final int shareGroupFaultyPersisterFailPercentage;
     private final AbstractConfig config;
 
     public ShareGroupConfig(AbstractConfig config) {
@@ -106,6 +114,7 @@ public class ShareGroupConfig {
         shareFetchPurgatoryPurgeIntervalRequests = config.getInt(ShareGroupConfig.SHARE_FETCH_PURGATORY_PURGE_INTERVAL_REQUESTS_CONFIG);
         shareGroupMaxShareSessions = config.getInt(ShareGroupConfig.SHARE_GROUP_MAX_SHARE_SESSIONS_CONFIG);
         shareGroupPersisterClassName = config.getString(ShareGroupConfig.SHARE_GROUP_PERSISTER_CLASS_NAME_CONFIG);
+        shareGroupFaultyPersisterFailPercentage = config.getInt(ShareGroupConfig.SHARE_GROUP_FAULTY_PERSISTER_FAIL_PERCENTAGE_CONFIG);
         validate();
     }
 
@@ -144,6 +153,10 @@ public class ShareGroupConfig {
 
     public String shareGroupPersisterClassName() {
         return shareGroupPersisterClassName;
+    }
+
+    public int shareGroupFaultyPersisterFailPercentage() {
+        return shareGroupFaultyPersisterFailPercentage;
     }
 
     private void validate() {

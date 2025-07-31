@@ -32,6 +32,7 @@ public class AcquisitionLockTimerTask extends TimerTask {
     private final long lastOffset;
     private final AcquisitionLockTimeoutHandler timeoutHandler;
     private final SharePartitionMetrics sharePartitionMetrics;
+    private volatile boolean hasExpired;
 
     public AcquisitionLockTimerTask(
         Time time,
@@ -49,10 +50,15 @@ public class AcquisitionLockTimerTask extends TimerTask {
         this.lastOffset = lastOffset;
         this.timeoutHandler = timeoutHandler;
         this.sharePartitionMetrics = sharePartitionMetrics;
+        this.hasExpired = false;
     }
 
     public long expirationMs() {
         return expirationMs;
+    }
+
+    public boolean hasExpired() {
+        return hasExpired;
     }
 
     /**
@@ -61,6 +67,11 @@ public class AcquisitionLockTimerTask extends TimerTask {
     @Override
     public void run() {
         sharePartitionMetrics.recordAcquisitionLockTimeoutPerSec(lastOffset - firstOffset + 1);
+        processAcquisitionLockTimeout();
+        hasExpired = true;
+    }
+
+    public void processAcquisitionLockTimeout() {
         timeoutHandler.handle(memberId, firstOffset, lastOffset);
     }
 }

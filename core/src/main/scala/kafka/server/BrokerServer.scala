@@ -50,7 +50,7 @@ import org.apache.kafka.server.config.{ConfigType, DelegationTokenManagerConfigs
 import org.apache.kafka.server.log.remote.storage.{RemoteLogManager, RemoteLogManagerConfig}
 import org.apache.kafka.server.metrics.{ClientMetricsReceiverPlugin, KafkaYammerMetrics}
 import org.apache.kafka.server.network.{EndpointReadyFutures, KafkaAuthorizerServerInfo}
-import org.apache.kafka.server.share.persister.{DefaultStatePersister, NoOpStatePersister, Persister, PersisterStateManager}
+import org.apache.kafka.server.share.persister.{DefaultStatePersister, FaultyStatePersister, NoOpStatePersister, Persister, PersisterStateManager}
 import org.apache.kafka.server.share.session.ShareSessionCache
 import org.apache.kafka.server.util.timer.{SystemTimer, SystemTimerReaper}
 import org.apache.kafka.server.util.{Deadline, FutureUtils, KafkaScheduler}
@@ -681,6 +681,9 @@ class BrokerServer(
       } else if (klass.getName.equals(classOf[NoOpStatePersister].getName)) {
         info("Using no-op persister")
         new NoOpStatePersister()
+      } else if (klass.getName.equals(classOf[FaultyStatePersister].getName)) {
+        info("Using faulty state persister")
+        new FaultyStatePersister(config.shareGroupConfig.shareGroupFaultyPersisterFailPercentage())
       } else {
         error("Unknown persister specified. Persister is only factory-pluggable!")
         throw new IllegalArgumentException("Unknown persister specified " + config.shareGroupConfig.shareGroupPersisterClassName)

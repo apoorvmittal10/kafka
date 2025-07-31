@@ -876,7 +876,7 @@ public class PersisterStateManager {
 
         @Override
         protected void handleRequestResponse(ClientResponse response) {
-            log.debug("Read state response received - {}", response);
+            log.info("Read state response received - {}", response);
             readStateBackoff.incrementAttempt();
 
             ReadShareGroupStateResponse combinedResponse = (ReadShareGroupStateResponse) response.responseBody();
