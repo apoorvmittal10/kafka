@@ -597,6 +597,16 @@ public class ClientTelemetryReporter implements MetricsReporter {
         }
 
         @Override
+        public boolean isTerminatingPushNeeded() {
+            lock.readLock().lock();
+            try {
+                return state == ClientTelemetryState.TERMINATING_PUSH_NEEDED;
+            } finally {
+                lock.readLock().unlock();
+            }
+        }
+
+        @Override
         public void initiateClose() {
             log.debug("initiate close for client telemetry, check if terminal push required.");
 

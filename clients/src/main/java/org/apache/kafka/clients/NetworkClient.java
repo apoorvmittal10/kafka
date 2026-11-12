@@ -810,6 +810,8 @@ public class NetworkClient implements KafkaClient {
      */
     @Override
     public void close() {
+        if (telemetrySender != null && active())
+            telemetrySender.maybeSendTerminatingPush();
         state.compareAndSet(State.ACTIVE, State.CLOSING);
         if (state.compareAndSet(State.CLOSING, State.CLOSED)) {
             cancelBootstrapResolution();
@@ -1654,6 +1656,32 @@ public class NetworkClient implements KafkaClient {
 
         public TelemetrySender(ClientTelemetrySender clientTelemetrySender) {
             this.clientTelemetrySender = clientTelemetrySender;
+        }
+
+        /**
+         * Makes the final, terminating telemetry push, if one was requested, before the client is closed. The push
+         * is only attempted on the sticky node if it is already ready, so that closing never waits to connect,
+         * and the wait for its response is bounded by the request timeout.
+         */
+        void maybeSendTerminatingPush() {
+            if (!clientTelemetrySender.isTerminatingPushNeeded() || stickyNode == null)
+                return;
+
+            long now = time.milliseconds();
+            String nodeId = stickyNode.idString();
+            if (!canSendRequest(nodeId, now))
+                return;
+
+            Optional<AbstractRequest.Builder<?>> request = clientTelemetrySender.createRequest();
+            if (request.isEmpty())
+                return;
+
+            doSend(newClientRequest(nodeId, request.get(), now, true), true, now);
+            long deadlineMs = now + defaultRequestTimeoutMs;
+            while (inFlightRequests.count(nodeId) > 0 && now < deadlineMs) {
+                poll(Math.min(deadlineMs - now, 100), now);
+                now = time.milliseconds();
+            }
         }
 
         public long maybeUpdate(long now) {

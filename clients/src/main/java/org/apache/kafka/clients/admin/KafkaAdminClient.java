@@ -742,8 +742,9 @@ public class KafkaAdminClient extends AdminClient {
         long now = time.milliseconds();
         long newHardShutdownTimeMs = now + waitTimeMs;
         long prev = INVALID_SHUTDOWN_TIME;
+        // The metrics, and so the telemetry reporter, are closed by the I/O thread as it exits, after
+        // the network client has made the terminating telemetry push.
         clientTelemetryReporter.ifPresent(ClientTelemetryReporter::initiateClose);
-        metrics.close();
         while (true) {
             if (hardShutdownTimeMs.compareAndSet(prev, newHardShutdownTimeMs)) {
                 if (prev == INVALID_SHUTDOWN_TIME) {

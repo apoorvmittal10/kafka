@@ -1198,8 +1198,10 @@ public class ClassicKafkaConsumer<K, V> implements ConsumerDelegate<K, V> {
         closeQuietly(interceptors, "consumer interceptors", firstException);
         closeQuietly(kafkaConsumerMetrics, "kafka consumer metrics", firstException);
         closeQuietly(fetchMetricsManager, "kafka fetch metrics", firstException);
-        closeQuietly(metrics, "consumer metrics", firstException);
+        // The network client is closed before the metrics, and so the telemetry reporter, so that it can
+        // make the terminating telemetry push.
         closeQuietly(client, "consumer network client", firstException);
+        closeQuietly(metrics, "consumer metrics", firstException);
         closeQuietly(deserializers, "consumer deserializers", firstException);
         clientTelemetryReporter.ifPresent(reporter -> closeQuietly(reporter, "consumer telemetry reporter", firstException));
         AppInfoParser.unregisterAppInfo(CONSUMER_JMX_PREFIX, clientId, metrics);
