@@ -73,6 +73,7 @@ import org.apache.kafka.server.util.timer.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -85,6 +86,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -333,6 +336,174 @@ public class SharePartition implements AutoCloseable {
      * Reference to the DLQ manager implementation.
      */
     private final ShareGroupDLQManager shareGroupDLQManager;
+
+    // ---------------------------------------------------------------------------------------------
+    // SPIKE (key-based ordering): not production code. Benchmark-only prototype of key gating.
+    // All fields below are guarded by {@link #lock}.
+    // ---------------------------------------------------------------------------------------------
+
+    /**
+     * When true, a record is only acquirable if it is the lowest-offset non-terminal record for its key.
+     */
+    private volatile boolean keyOrderingEnabled = false;
+
+    /**
+     * Offset to 64-bit key hash for scanned, non-terminal records that have a non-null key.
+     */
+    private final TreeMap<Long, Long> offsetKeyHash = new TreeMap<>();
+
+    /**
+     * Key hash to the ordered set of non-terminal offsets for that key. Terminal heads are pruned lazily.
+     */
+    private final Map<Long, TreeSet<Long>> keyOffsets = new HashMap<>();
+
+    // Visible for benchmarks.
+    void setKeyOrderingEnabled(boolean enabled) {
+        this.keyOrderingEnabled = enabled;
+    }
+
+    // Visible for benchmarks.
+    int trackedKeyCount() {
+        lock.readLock().lock();
+        try {
+            return keyOffsets.size();
+        } finally {
+            lock.readLock().unlock();
+        }
+    }
+
+    private static long hashKey(ByteBuffer key) {
+        // FNV-1a 64 over the key bytes, without copying. A collision only reduces parallelism.
+        long h = 0xcbf29ce484222325L;
+        for (int i = key.position(); i < key.limit(); i++) {
+            h ^= (key.get(i) & 0xffL);
+            h *= 0x100000001b3L;
+        }
+        return h;
+    }
+
+    /**
+     * Records the key hash of every keyed record in [firstOffset, lastOffset] that is not yet tracked.
+     * Requires iterating records of each fetched batch, which decompresses compressed batches.
+     * Must be called with the write lock held.
+     */
+    private void registerKeys(Iterable<? extends RecordBatch> batches, long firstOffset, long lastOffset) {
+        // Drop tracking for records that are now behind the start offset.
+        while (!offsetKeyHash.isEmpty() && offsetKeyHash.firstKey() < startOffset) {
+            Map.Entry<Long, Long> e = offsetKeyHash.pollFirstEntry();
+            TreeSet<Long> offsets = keyOffsets.get(e.getValue());
+            if (offsets != null) {
+                offsets.remove(e.getKey());
+                if (offsets.isEmpty()) {
+                    keyOffsets.remove(e.getValue());
+                }
+            }
+        }
+        for (RecordBatch batch : batches) {
+            if (batch.baseOffset() > lastOffset) {
+                break;
+            }
+            if (batch.isControlBatch() || batch.lastOffset() < firstOffset) {
+                continue;
+            }
+            for (Record record : batch) {
+                long offset = record.offset();
+                if (offset < firstOffset || offset > lastOffset || offsetKeyHash.containsKey(offset)) {
+                    continue;
+                }
+                ByteBuffer key = record.key();
+                if (key == null) {
+                    continue; // Null key records are unordered.
+                }
+                long hash = hashKey(key);
+                offsetKeyHash.put(offset, hash);
+                keyOffsets.computeIfAbsent(hash, k -> new TreeSet<>()).add(offset);
+            }
+        }
+    }
+
+    private boolean isOffsetTerminalOrGone(long offset) {
+        Map.Entry<Long, InFlightBatch> floor = cachedState.floorEntry(offset);
+        if (floor == null || floor.getValue().lastOffset() < offset) {
+            return true;
+        }
+        InFlightBatch batch = floor.getValue();
+        RecordState state = batch.offsetState() == null ? batch.batchState() : batch.offsetState().get(offset).state();
+        return isStateTerminal(state);
+    }
+
+    /**
+     * A record is eligible if it has no key, or it is the lowest-offset non-terminal record of its key.
+     * Must be called with the write lock held.
+     */
+    private boolean isKeyEligible(long offset) {
+        Long hash = offsetKeyHash.get(offset);
+        if (hash == null) {
+            return true;
+        }
+        TreeSet<Long> offsets = keyOffsets.get(hash);
+        while (!offsets.isEmpty() && offsets.first() != offset && isOffsetTerminalOrGone(offsets.first())) {
+            long pruned = offsets.pollFirst();
+            offsetKeyHash.remove(pruned);
+        }
+        return offsets.first() == offset;
+    }
+
+    /**
+     * Key-ordered variant of acquireNewBatchRecords: creates per-offset AVAILABLE in-flight state for the
+     * fetched range (so blocked records stay tracked) and acquires only the key-eligible offsets.
+     */
+    private ShareAcquiredRecords acquireNewBatchRecordsKeyOrdered(
+        String memberId,
+        Iterable<? extends RecordBatch> batches,
+        long firstOffset,
+        long lastOffset,
+        int maxFetchRecords
+    ) {
+        lock.writeLock().lock();
+        try {
+            long first = firstOffset;
+            if (cachedState.isEmpty() && endOffset > first) {
+                first = endOffset;
+            }
+            List<AcquiredRecords> result = new ArrayList<>();
+            int acquired = 0;
+            long lastCreated = -1;
+            for (RecordBatch batch : batches) {
+                if (batch.baseOffset() > lastOffset) {
+                    break;
+                }
+                long lo = Math.max(first, batch.baseOffset());
+                long hi = Math.min(lastOffset, batch.lastOffset());
+                if (hi < lo || cachedState.containsKey(lo)) {
+                    continue;
+                }
+                InFlightBatch inFlightBatch = new InFlightBatch(timer, time, EMPTY_MEMBER_ID, lo, hi,
+                    RecordState.AVAILABLE, 0, null, timeoutHandler, sharePartitionMetrics);
+                inFlightBatch.maybeInitializeOffsetStateUpdate();
+                cachedState.put(lo, inFlightBatch);
+                lastCreated = hi;
+                if (acquired < maxFetchRecords) {
+                    acquired += acquireSubsetBatchRecords(memberId, true, maxFetchRecords - acquired, lo, hi, inFlightBatch, result);
+                }
+            }
+            if (lastCreated < 0) {
+                return ShareAcquiredRecords.empty();
+            }
+            if (cachedState.firstKey() == first) {
+                startOffset = first;
+            }
+            if (lastCreated > endOffset) {
+                endOffset = lastCreated;
+            }
+            maybeUpdatePersisterGapWindowStartOffset(lastCreated + 1);
+            // Some created records may be eligible but not acquired (fetch limit) or become eligible later.
+            updateFindNextFetchOffset(true);
+            return new ShareAcquiredRecords(result, acquired);
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
 
     @SuppressWarnings("ParameterNumber")
     SharePartition(
@@ -673,7 +844,8 @@ public class SharePartition implements AutoCloseable {
                 } else {
                     // The offset state is maintained hence find the next available offset.
                     for (Map.Entry<Long, InFlightState> offsetState : entry.getValue().offsetState().entrySet()) {
-                        if (offsetState.getValue().state() == RecordState.AVAILABLE && !offsetState.getValue().hasOngoingStateTransition()) {
+                        if (offsetState.getValue().state() == RecordState.AVAILABLE && !offsetState.getValue().hasOngoingStateTransition()
+                            && (!keyOrderingEnabled || isKeyEligible(offsetState.getKey()))) {
                             nextFetchOffset = offsetState.getKey();
                             break;
                         }
@@ -832,6 +1004,9 @@ public class SharePartition implements AutoCloseable {
             // However, as baseOffset might have been adjusted above, which could either move ahead
             // to align with startOffset or moved back to align with floor entry hence compute the
             // min of first batch base offset and adjusted base offset.
+            if (keyOrderingEnabled) {
+                registerKeys(fetchPartitionData.records.batches(), Math.min(firstBatch.baseOffset(), baseOffset), lastOffsetToAcquire);
+            }
             final NavigableMap<Long, InFlightBatch> subMap = cachedState.subMap(
                 Math.min(firstBatch.baseOffset(), baseOffset), true, lastOffsetToAcquire, true);
             // No overlap with request offsets in the cache for in-flight records. Acquire the complete
@@ -849,8 +1024,10 @@ public class SharePartition implements AutoCloseable {
                 // in ARCHIVED state. The fetch returns 0-10 as first batch, then the baseOffset
                 // is adjusted to 5, to the startOffset. As there is no cached batch from 0-10, the
                 // submap will be empty and the first offset for batch for acquire should be 5 not 0.
-                ShareAcquiredRecords shareAcquiredRecords = acquireNewBatchRecords(memberId, fetchPartitionData.records.batches(), isRecordLimitMode,
-                    baseOffset, lastOffsetToAcquire, batchSize, maxRecordsToAcquire);
+                ShareAcquiredRecords shareAcquiredRecords = keyOrderingEnabled
+                    ? acquireNewBatchRecordsKeyOrdered(memberId, fetchPartitionData.records.batches(), baseOffset, lastOffsetToAcquire, maxRecordsToAcquire)
+                    : acquireNewBatchRecords(memberId, fetchPartitionData.records.batches(), isRecordLimitMode,
+                        baseOffset, lastOffsetToAcquire, batchSize, maxRecordsToAcquire);
                 return maybeFilterAbortedTransactionalAcquiredRecords(fetchPartitionData, isolationLevel, shareAcquiredRecords);
             }
 
@@ -916,7 +1093,7 @@ public class SharePartition implements AutoCloseable {
                     maxRecordsToAcquire = 0;
                     break;
                 }
-                if (!fullMatch || inFlightBatch.offsetState() != null || recordLimitSubsetMatch || throttleRecordsDelivery) {
+                if (!fullMatch || inFlightBatch.offsetState() != null || recordLimitSubsetMatch || throttleRecordsDelivery || keyOrderingEnabled) {
                     log.trace("Subset or offset tracked batch record found for share partition,"
                             + " batch: {} request offsets - first: {}, last: {} for the share"
                             + " partition: {}-{}", inFlightBatch, firstBatch.baseOffset(),
@@ -982,9 +1159,12 @@ public class SharePartition implements AutoCloseable {
             if (acquiredCount < maxRecordsToAcquire && subMap.lastEntry().getValue().lastOffset() < lastOffsetToAcquire) {
                 log.trace("There exists another batch which needs to be acquired as well");
                 int numRecordsRemaining = maxRecordsToAcquire - acquiredCount;
-                ShareAcquiredRecords shareAcquiredRecords = acquireNewBatchRecords(memberId, fetchPartitionData.records.batches(), isRecordLimitMode,
-                    subMap.lastEntry().getValue().lastOffset() + 1,
-                    lastOffsetToAcquire, batchSize, numRecordsRemaining);
+                ShareAcquiredRecords shareAcquiredRecords = keyOrderingEnabled
+                    ? acquireNewBatchRecordsKeyOrdered(memberId, fetchPartitionData.records.batches(),
+                        subMap.lastEntry().getValue().lastOffset() + 1, lastOffsetToAcquire, numRecordsRemaining)
+                    : acquireNewBatchRecords(memberId, fetchPartitionData.records.batches(), isRecordLimitMode,
+                        subMap.lastEntry().getValue().lastOffset() + 1,
+                        lastOffsetToAcquire, batchSize, numRecordsRemaining);
                 result.addAll(shareAcquiredRecords.acquiredRecords());
                 acquiredCount += shareAcquiredRecords.count();
             }
@@ -1069,6 +1249,10 @@ public class SharePartition implements AutoCloseable {
         // If the acknowledgement is successful then persist state, complete the state transition
         // and update the cached state for start offset. Else rollback the state transition.
         rollbackOrProcessStateUpdates(future, throwable, persisterBatches);
+        if (keyOrderingEnabled) {
+            // SPIKE: a terminal transition can unblock the next record of a key, so recompute next fetch offset.
+            future.thenRun(() -> updateFindNextFetchOffset(true));
+        }
         return future;
     }
 
@@ -1992,6 +2176,12 @@ public class SharePartition implements AutoCloseable {
                 if (offsetState.getValue().state() != RecordState.AVAILABLE || offsetState.getValue().hasOngoingStateTransition()) {
                     log.trace("The offset {} is not available in share partition: {}-{}, skipping: {}",
                         offsetState.getKey(), groupId, topicIdPartition, inFlightBatch);
+                    continue;
+                }
+
+                // SPIKE: key ordering gate. Blocked records must be skipped before any state transition so
+                // that their delivery count is not incremented.
+                if (keyOrderingEnabled && !isKeyEligible(offsetState.getKey())) {
                     continue;
                 }
 
