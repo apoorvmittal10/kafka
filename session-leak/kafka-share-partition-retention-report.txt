@@ -1,0 +1,156 @@
+Summary
+
+Apache Kafka's Share session replacement path can leave inconsistent member and
+partition counters when two INITIAL ShareFetch requests with the same
+(groupId, memberId) are interleaved. SharePartitionManager.newContext removes
+the existing session and creates its replacement in separate operations. The
+operations are individually synchronized, but the complete replacement is not
+atomic.
+
+If both requests complete remove before either creates its replacement, both
+maybeCreateSession calls increment the counters. The second session overwrites
+the first value in the sessions map without rolling back the first counter
+increments. When both connections disconnect, only the session currently in
+the map can be removed. A phantom member and partition count remain, so the
+group-empty callback is not emitted.
+
+SharePartitionManager relies on that callback to remove all SharePartition
+objects for the group. The associated SharePartitionCache entries therefore
+remain reachable after the sessions and connections are gone. Repeated unique
+groups or partition keys can accumulate entries and consume broker resources.
+
+
+Affected Component
+
+Apache Kafka Share groups and broker-side Share session state.
+
+Relevant source components:
+
+  core/src/main/java/kafka/server/share/SharePartitionManager.java
+  server/src/main/java/org/apache/kafka/server/share/session/ShareSessionCache.java
+  core/src/main/java/kafka/server/share/SharePartitionCache.java
+
+Relevant methods:
+
+  SharePartitionManager.newContext(...)
+  ShareSessionCache.remove(ShareSessionKey)
+  ShareSessionCache.maybeCreateSession(...)
+  ShareSessionCache.connectionDisconnectListener().onDisconnect(...)
+  SharePartitionManager.ShareGroupListenerImpl.onGroupEmpty(...)
+
+
+Root Cause
+
+For an INITIAL ShareFetch request, newContext performs:
+
+  1. cache.remove(key)
+  2. Build the new cached partition map
+  3. cache.maybeCreateSession(groupId, memberId, partitionMap, connectionId)
+
+The individual cache methods are synchronized, but the sequence is not held
+under one lock. maybeCreateSession unconditionally inserts a session under the
+same ShareSessionKey, increments numPartitions, increments
+numMembersPerGroup, and records a connection mapping. It does not compensate
+the counters if another session with the same key was inserted in the
+intervening window.
+
+The disconnect path removes the connection mapping and the session currently
+stored for the key. The overwritten session is no longer in the sessions map,
+so its counter increments cannot be removed. A positive phantom member count
+prevents checkAndNotifyListenersOnGroupEmpty from notifying the
+SharePartitionManager listener. The listener consequently does not enumerate
+and remove the group's partition-cache entries.
+
+
+Impact
+
+The directly demonstrated state is:
+
+  - sessions.size() becomes zero after both connections disconnect;
+  - numMembersPerGroup retains a positive phantom member;
+  - totalPartitions retains a positive phantom partition count;
+  - group-empty is not called; and
+  - SharePartitionCache entries remain present.
+
+The retained entries keep SharePartition-related objects, keys, metadata,
+listeners, metrics, and any internal partition state reachable. The cache has
+no byte limit or TTL. Repeated unique-key occurrences can therefore increase
+broker heap and related resource usage. The no-ballast test does not establish
+a fixed number of bytes per production SharePartition.
+
+
+Core PoC: SharePartitionCacheRetentionPoC
+
+File:
+
+  core/src/test/java/kafka/server/share/SharePartitionCacheRetentionPoC.java
+
+The test constructs a real SharePartitionManager with test doubles only for
+unrelated broker services. Two executor tasks call the production newContext
+method with the same group and member but different partition lists and
+connection IDs. A ShareSessionCache subclass places a barrier after the two
+real remove calls, forcing both requests to reach the remove/create window
+before either maybeCreateSession call proceeds.
+
+Each cycle uses a unique group and topic-partition key. The test pre-populates
+one or more SharePartitionCache entries, completes both real INITIAL requests,
+disconnects both connections through the real disconnect listener, and checks
+the resulting state.
+
+After each cycle it asserts:
+
+  sessions.size()       == 0
+  numMembers(group)     == 1
+  totalPartitions()     remains positive
+  the current cache key is still present
+
+At the end it asserts:
+
+  partitionCache.size()             == cycles * partitionsPerGroup
+  cachedSharePartitionKeys().size() == cycles * partitionsPerGroup
+  group-empty callbacks             == 0
+
+The experiment values are declared as constants at the top of the test file,
+so the investigator changes those constants directly before each run. With 
+1,000 cycles, the cache contains 1,000 entries after all disconnects. This
+demonstrates cardinality retention through the production newContext
+concurrency path.
+
+
+Diagnostic Ballast Mode
+
+The `DEFAULT_BALLAST_BYTES` constant allocates a byte array captured by the
+Mockito answer associated with each test SharePartition mock. The array is
+deliberately reachable through the retained cache entry; it is not a
+production SharePartition size estimate.
+
+With 1,000 cycles, one partition per group, and 131,072 ballast bytes per
+entry, the class histogram reported:
+
+  [B                  141,417,496 bytes
+  SharePartition      1,000 instances
+  SharePartitionKey   1,000 instances
+
+The corresponding no-ballast run reported 10,453,176 bytes of byte arrays.
+The difference was approximately 130,964,320 bytes, consistent with
+1,000 * 131,072 bytes. A 256 MiB test-worker heap reached OutOfMemoryError
+under this deliberately amplified workload.
+
+This result proves that retained cache entries can keep their reachable object
+graph alive and create heap pressure under a bounded JVM. It does not prove
+that a production broker will OOM after 1,000 ordinary disconnects, nor does
+it establish a production denial-of-service threshold.
+
+
+Conclusion
+
+The core PoC establishes a lifecycle and accounting defect:
+
+  concurrent same-key session replacement
+    -> inconsistent member/partition counters
+    -> no group-empty notification
+    -> SharePartitionCache entries retained after disconnect
+
+The default test demonstrates cache-entry retention and incorrect counters.
+The ballast mode demonstrates test-JVM heap exhaustion after synthetic
+amplification.
